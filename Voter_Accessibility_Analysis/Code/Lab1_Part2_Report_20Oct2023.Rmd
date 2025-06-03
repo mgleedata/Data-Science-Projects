@@ -1,0 +1,600 @@
+---
+title: "Divided Democracy: Analyzing the Impact of Stricter Voting Laws on Party-Specific Voter Accessibility"
+subtitle: "DATASCI 203: Lab#1"
+author: "Maria Lee, Jackie Loyola and Tracy Volz" 
+---
+```{r}
+
+```
+
+
+```{r load packages and set options, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(rstatix)
+library(sjstats)
+library(gridExtra)
+library(gtable)
+library(DescTools)
+library(coin)
+library(patchwork)
+library(knitr)
+library(kableExtra)
+
+theme_set(theme_bw())
+
+options(tinytex.verbose = TRUE)
+knitr::opts_chunk$set(echo=FALSE, message=FALSE)
+
+```
+
+```{r load data, include=FALSE}
+anes <- read.csv("anes_pilot_2022_csv_20221214.csv")
+```
+
+## Importance and Context
+
+After the controversial 2020 election, the American political landscape was deeply divided. The division over the election’s legitimacy led to a stark contrast between the Republicans and Democrats views on voting laws. Republicans took a stance that stricter voting laws were necessary to protect the integrity of elections and to ensure that only eligible voters had their voices heard. Many Republican-controlled state legislatures moved to pass stricter measures such as limiting the ease of mail-in voting or requiring specific voter identification to prevent voter fraud.
+On the other side, Democrats opposed these changes to voting laws. They argued that these stricter measures were unnecessary and that they would disproportionately affect minority and low-income communities, who often faced more challenges in obtaining the required identification. Democrats believed that these voting laws were an attempt to make it harder for Democratic voters to participate in elections. As a first step to analyze the effects of the stricter voting measures, this research aims to address the following question:
+
+<p style="text-align:center;">_**Do Democratic voters or Republican voters experience more difficulty voting?**_</p>
+
+By answering this question, we can potentially provide insight if certain political parties are experiencing more difficulty voting since the implementation of stricter voting laws from the 2020 election. It could also provide guidance to policy-makers to hopefully find a reasonable balance on voting laws between the two major parties.
+
+## Data and Methodology
+
+Our analysis utilizes information sourced from American National Election Studies (ANES).  This observational pilot study was administered through the internet by YouGov between 14Nov2022 and 22Nov2022.  The purpose of this pilot study was to test new questions for ANES's 2024 Time Series Study and to provide information regarding voting and public and opinion after the 2022 US midterm elections.  The dataset consists of 1585 respondents, of which 1500 were weighted to represent the U.S. population accurately after data collection, considering factors such as 2020 presidential candidate choice, gender, age, education, and race.  This analysis did not incorporate the weights because we cannot perform mathematical operations to ordinal data.  Participants were rewarded for their participation in completing the questionnaire.  
+
+Individuals were assigned to one of three groups -- Democrats, Republicans and Other.  The following questions were used to assign individuals to each group:  
+  _- For the U.S. House did you vote for a Democrat, a Republican, or another party or independent candidate? _  
+  _- For the U.S. Senate, did you vote Democrat, Republican, or another party or independent candidate? _  
+  _- For governor of your state, did you vote for a Democrat, Republican, or another party? _  
+  _- In the 2020 presidential election, who did you vote for? Donald Trump, Joe Biden, or someone else? _  
+  _- Generally speaking, do you usually think of yourself as a Democrat, a Republican, an independent, or what? _  
+  _- Generally speaking, do you usually think of yourself as a Republican, a Democrat, an independent, or what? _  
+  _- Do you think of yourself as closer to the Republican Party or to the Democratic Party? _ 
+
+For each person, we compared the sum of responses for "Democrat" and "Republican".  If the person had more responses for one party, they were assigned to that party.  In the context of our study, a Democrat is a person that responded more frequently to these questions with "Democratic."  In the context of our study, a Republican is a person that responded more frequently to these question with "Republican." In Table 1, we report that 662 respondents are classified as Democrats (~42%), 631 were classified as Republicans (~40%), and 292 were classified as Other (~18%).  With this report, we aim to assess variations, if any, in voting challenges between two specific groups: Republicans and Democrats. Our analysis excluded all respondents categorized as "Other." To evaluate these differences, we utilized the ANES question: 
+
+<p style="text-align:center;">_**How challenging was it for you to vote?**_</p>
+
+The data is reported on a 5 point Likert scale that ranges from 1 ("Not very difficult") to 5 ("Very difficult"). Out of the 662 Democrats, only 529 provided responses to this question, while among the 631 Republicans, 581 respondents answered this question.           
+```{r, include=FALSE}
+
+# Create the 'pidlean_flip' column based on 'pidlean'
+anes$pidlean_flip <- ifelse(anes$pidlean == 1, 2, ifelse(anes$pidlean == 2, 1, NA))
+
+# Create the "RepVotes" column
+anes$RepVotes <- rowSums(apply(anes[, c("house22p", "senate22p", "vote20", "gov22p", "pid1d", "pid1r", "pidlean_flip")], 2, function(x) as.numeric(x) == 2), na.rm = TRUE)
+
+# Create the "DemVotes" column
+anes$DemVotes <- rowSums(apply(anes[, c("house22p", "senate22p", "vote20", "gov22p", "pid1d", "pid1r", "pidlean_flip")], 2, function(x) as.numeric(x) == 1), na.rm = TRUE)
+
+anes$party_affiliation <- ifelse(anes$DemVotes > anes$RepVotes, "Democrat",
+                                 ifelse(anes$DemVotes < anes$RepVotes, "Republican", "Other"))
+
+# Count the number of each category in the 'party_affiliation' column
+party_counts <- table(anes$party_affiliation)
+
+# Calculate proportions using prop.table
+party_proportions <- prop.table(party_counts)
+
+# Create a data frame to display counts and proportions
+party_summary <- data.frame(
+  Party_Affiliation = names(party_counts),
+  Count = as.numeric(party_counts),
+  Proportion = as.numeric(party_proportions)
+)
+
+# Rename the rows for clarity
+rownames(party_summary) <- levels(anes$party_affiliation)
+
+# Create a publication-ready table using kableExtra
+table <- kable(party_summary, format = "html", caption = "Table 1", col.names = c("Party Affiliation", "Count", "Proportion")) %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+# Print the table
+print(table)
+
+
+```
+```{r, results='asis'}
+
+# Calculate the number of valid "Difficult" values for Republicans and Democrats
+rep_count_difficult <- sum(anes$party_affiliation == "Republican" & anes$votehard >= 1 & anes$votehard <= 5)
+dem_count_difficult <- sum(anes$party_affiliation == "Democrat" & anes$votehard >= 1 & anes$votehard <= 5)
+
+# Create data frames for the original data and the additional data
+party_counts <- table(anes$party_affiliation)
+party_proportions <- prop.table(party_counts)
+
+party_summary <- data.frame(
+  Party_Affiliation = names(party_counts),
+  Count = as.numeric(party_counts),
+  Proportion = as.numeric(party_proportions)
+)
+
+# Calculate the proportion of respondents who answered the "Difficulty" question
+answered_difficulty_question <- c(rep_count_difficult, dem_count_difficult) / c(party_counts["Republican"], party_counts["Democrat"])
+
+additional_data <- data.frame(
+  Party_Affiliation = c("Republican", "Democrat"),
+  Count_Difficult = c(rep_count_difficult, dem_count_difficult),
+  Answered_Difficulty_Question = answered_difficulty_question
+)
+
+# Combine the data frames
+combined_data <- full_join(party_summary, additional_data, by = "Party_Affiliation")
+
+# Create a publication-ready table using kableExtra
+table <- kable(combined_data, format = "html", caption = "Table 1 - Summary of Data", 
+               col.names = c("Party Affiliation", "Classified (Count)", "Classified (Proportion)", "Answered \"Difficulty\" Question (Count)", "Answered \"Difficulty\" Question (Proportion)")
+) %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE, 
+                position = "center")
+
+# Print the table
+print(table)
+
+
+```
+An ideal scenario for comparing two groups involves metric data that follows normal distribution with equal variances.  The perfect scenario also ensures all demographics in the US are equally represented.  In this perfect scenario, a t-test we would select a t-test because it offers the highest level of statistical power and highest degree of accuracy.
+
+For the case of our study, we do not have access to metric data, and we aren't provided assurance that all demographics in the US are equally represented.  Given that we're using ordinal data that describes voting difficulties, and we want to compare two different groups that are mutually independent, our best option is to perform a "Comparison of Hypothesis" version of the Wilcoxon Ranked Sum test. 
+
+The null hypothesis of our Wilcoxon Ranked Sum test can be phrased as follows:
+
+<p style="text-align:center;">**The probability that a draw from "Democrats - Voting Difficulty" ranks higher than a draw from "Republican  - Voting Difficulty" is the same as the probability that a draw from "Republican - Voting Difficulty" ranks higher than a draw from "Democrats - Voting Difficulty.**</p> 
+
+The assumptions for the Wilcoxon Ranked Sum test are as follows:
+
+ - Data must be identically distributed - The ANES and YouGov group has a positive reputation for creating high-quality cross sectional survey data used for research.  The principal investigators for this study are represented by top-tier universities in the US (University of Michigan, Stanford University, Duke University).  However, the possibility of issues related to clustering remains a possibility.  For example, geographical clustering due to bad weather in certain areas of the country could have caused many people with similar political views to be in a bad mood when they took the survey or when they tried to vote.  There's also the possibility of temporal dependencies due to a difficult voting experience in the past and unrelated to their voting experience in 2022.  Because this survey was completed through the internet, there is a possibility that some people might not have been able to complete the survey due to internet issues or lack of internet access. There are a number of possibilities that could have violated strict IID assumptions, however, based on the data provided there are no clear IID violations 
+ 
+ - Data must be ordinal or better - Our data is ordinal and the assumption criteria is met
+ 
+ - Each Xi is drawn from the same distribution, each Yi is drawn from the same distribution, and all and are mutually independent - Our grouping criteria allows a person to be either a Democrat or a Republican (not both), and the assumption criteria is met 
+
+## Results
+
+Results for this test produced a p-value = 0.0144.  Given the data at hand, we would typically reject the null hypothesis because our p-value is less than 0.05.  While these results would typically be considered statistically significant, the calculated effect size (r) was 0.1066951 which indicates these results likley have no practical significance.  The interpretation of this value 
+
+```{r}
+
+### Anlaysis of "Votehard" grouped by party
+
+# Subset the data for Republicans and Democrats
+subset_republican <- anes[anes$party_affiliation == "Republican" & anes$votehard >= 1 & anes$votehard <= 5, ]
+subset_democrat <- anes[anes$party_affiliation == "Democrat" & anes$votehard >= 1 & anes$votehard <= 5, ]
+
+# Define the breaks for the histogram bins
+breaks <- seq(0.5, 5.5, by = 1)  # Define breaks for bins of width 1
+
+# Create a histogram for Republicans
+hist_republican <- ggplot(data = subset_republican, aes(x = votehard)) +
+  geom_histogram(binwidth = 1, fill = "red", breaks = breaks) +
+  labs(
+    title = "Republican Voting Difficulty (1-5)",
+    x = "Voting Difficulty",
+    y = "Frequency"
+  ) +
+  xlim(1, 5) +
+  ylim(0, 550) +
+  scale_x_continuous(breaks = 1:5) +
+  scale_fill_identity() +  # Set the fill color
+  theme_minimal() +  # Choose a plot theme
+  theme(legend.position = "right") +  # Place the legend on the right
+  ggtitle("Republican Voting Difficulty (1-5)") +  # Adjust title
+  theme(plot.title = element_text(size = 14))  # Adjust title size
+
+# Create a histogram for Democrats
+hist_democrat <- ggplot(data = subset_democrat, aes(x = votehard)) +
+  geom_histogram(binwidth = 1, fill = "blue", breaks = breaks) +
+  labs(
+    title = "Democrat Voting Difficulty (1-5)",
+    x = "Voting Difficulty",
+    y = "Frequency"
+  ) +
+  xlim(1, 5) +
+  ylim(0, 550) +
+  scale_x_continuous(breaks = 1:5) +
+  scale_fill_identity() +  # Set the fill color
+  theme_minimal() +  # Choose a plot theme
+  theme(legend.position = "none")  # Remove the legend
+
+# Create a common legend with line breaks and font size
+legend_labels <- "Voting Difficulty scale\n1. Not difficult\n2. A little difficult\n3. Moderately difficult\n4. Very difficult\n5. Extremely difficult"
+
+common_legend <- ggplot() +
+  annotate("text", x = 0.5, y = 0.5, label = legend_labels, size = 3.5) +
+  theme_void()
+
+# Combine the plots and the common legend
+final_plot <- (hist_republican + hist_democrat) /
+  common_legend
+
+# Set the height of the top plot (hist_republican) to control the gap
+final_plot <- final_plot + plot_layout(heights = c(2, 2))
+
+# Print the final combined plot
+print(final_plot)
+
+# Perform the Wilcoxon rank sum test
+wilcox_test_result <- wilcox.test(x = subset_republican$votehard, y = subset_democrat$votehard,
+                                  alternative = "two.sided", mu = 0, paired = FALSE,
+                                  conf.int = TRUE, correct = TRUE,
+                                  conf.level = 0.95, 
+                                  method = "exact")
+wilcox_test_result
+
+
+# Effect size calculation using 
+
+subset_data <- subset(anes, party_affiliation %in% c("Republican", "Democrat"))
+
+effect_size <- wilcox_effsize(
+  data = subset_data,
+  formula = votehard ~ party_affiliation,
+  conf.level = 0.95,
+  method = "effsize",
+  paired = FALSE
+)
+cat("Effect Size:", effect_size$effsize, "\n")
+
+
+# Run a Mann Whitney test to confirm effect size 
+mannwhitney(
+  data = anes,
+  x = votehard,
+  grp = party_affiliation,
+  distribution = "asymptotic",
+  out = c("txt", "viewer", "browser"),
+  encoding = "UTF-8",
+  file = NULL
+)
+
+```
+
+```{r}
+
+```
+
+
+Some valid and consistent voters did not include a valid response to the question, "About how long was the wait time at your polling place?"  After removing entries without a valid wait time, 404 Democrats remain and 341 Republicans remain.    
+
+```{r}
+# Display the number of valid "Wait Time" values are present for Republican or Democrat
+
+rep_count_wait <- sum(anes$party_affiliation == "Republican" & anes$waittime >= 1 & anes$waittime <= 5)
+dem_count_wait <- sum(anes$party_affiliation == "Democrat" & anes$waittime >= 1 & anes$waittime <= 5)
+
+cat("Republican voters responded to wait time question:", rep_count_wait, "\n")
+cat("Democratic voters responded to wait time question:", dem_count_wait)
+
+```
+The histograms for both groups have a similar shape -- both are right-skewed.  Since the "Waittime" data is ordinal, we used an unparied Wilcoxon Ranked Sum test to compare the groups. 
+
+H0: P(Democrat wait time > Republican wait time) = P(Democrat wait time < Republican wait time)
+
+HA: P(Democrat wait time > Republican wait time) != P(Democrat wait time < Republican wait time)
+
+Results for this test produced a p-value = 0.03029.  A Cohen's d value of 0.2600587 was calculated, indicating the the magnitude of the effect size is small, and the differences between the groups likely have little practical significance.  Given the data at hand, we reject the null hypothesis, however we acknowledge the pratical significance is likley low. 
+
+
+```{r}
+
+### "Waitime"
+
+# Subset the data for Republicans and Democrats
+subset_republican <- anes[anes$party_affiliation == "Republican" & anes$waittime >= 1 & anes$waittime <= 5, ]
+subset_democrat <- anes[anes$party_affiliation == "Democrat" & anes$waittime >= 1 & anes$waittime <= 5, ]
+
+# Set up the layout for side-by-side plots
+par(mfrow = c(1, 2))
+
+# Create a histogram for Republicans
+hist(subset_republican$waittime, breaks = 5, main = "Republican Voting Wait Time (1-5)",
+     xlab = "Wait Time", ylab = "Frequency", col = "red", xlim = c(1, 5), ylim = c(0, 350))
+
+# Add a legend outside the plot area
+legend(x = 3.0, y = 350, legend = c("1. 0-15 minutes", "2. 16-30 minutes", "3. 31-59 minutes", "4. 1-2 hours", "5. More than 2 hours"), title = "Wait Time Levels", cex = 0.55)
+
+
+# Create a histogram for Democrats
+hist(subset_democrat$waittime, breaks = 5, main = "Democrat Voting Wait Time (1-5)",
+     xlab = "Wait Time", ylab = "Frequency", col = "blue", xlim = c(1, 5), ylim = c(0, 350))
+
+# Add a legend outside the plot area
+legend(x = 3.0, y = 350, legend = c("1. 0-15 minutes", "2. 16-30 minutes", "3. 31-59 minutes", "4. 1-2 hours", "5. More than 2 hours"), title = "Wait Time Levels", cex = 0.55)
+
+# Perform the Wilcoxon rank sum test with custom category names
+wilcox_test_wait <- wilcox.test(x = subset_republican$waittime, y = subset_democrat$waittime,
+                                  alternative = "two.sided", mu = 0, paired = FALSE,
+                                  conf.int = TRUE, correct = FALSE,
+                                  exact = NULL, conf.level = 0.95)
+
+# Display the results of the test
+print(wilcox_test_wait)
+
+# Calculate Cohen's d
+#cat("Cohen's d =", cohensD(subset_republican$waittime, subset_democrat$waittime), "\n")
+
+```
+Some valid and consistent voters did not include a valid response to the question, "How difficult was it for you to register to vote?"  After removing entries without a valid wait time, 76 Democrats remain and 56 Republicans remain.    
+```{r}
+# Display the number of valid "regdiff" values are present for Republican or Democrat
+
+rep_count_regdiff <- sum(anes$party_affiliation == "Republican" & anes$regdiff >= 1 & anes$regdiff <= 5)
+dem_count_regdiff <- sum(anes$party_affiliation == "Democrat" & anes$regdiff >= 1 & anes$regdiff <= 5)
+
+cat("Democratic responders to difficulty registering question:", dem_count_regdiff, "\n")
+cat("Republican responders to difficulty registering question:", rep_count_regdiff, "\n")
+```
+
+```{r}
+
+### "regdiff"
+
+# Subset the data for Republicans and Democrats
+subset_republican <- anes[anes$party_affiliation == "Republican" & anes$regdiff >= 1 & anes$regdiff <= 5, ]
+subset_democrat <- anes[anes$party_affiliation == "Democrat" & anes$regdiff >= 1 & anes$regdiff <= 5, ]
+
+# Set up the layout for side-by-side plots
+par(mfrow = c(1, 2))
+
+# Create a histogram for Republicans
+hist(subset_republican$regdiff, breaks = 5, main = "Republican Voting Registration",
+     xlab = "Registration Difficulty", ylab = "Frequency", col = "red", xlim = c(1, 5), ylim = c(0, 50))
+
+# Add a legend outside the plot area
+legend(x = 3.0, y = 50, legend = c("1. Not difficult", "2. A little difficult", "3. Moderately difficult", "4. Very difficult", "5. Extremely difficult"), title = "Difficulty Level", cex = 0.55)
+
+
+# Create a histogram for Democrats
+hist(subset_democrat$regdiff, breaks = 5, main = "Democrat Voting Registration",
+     xlab = "Registration Difficulty", ylab = "Frequency", col = "blue", xlim = c(1, 5), ylim = c(0, 50))
+
+# Add a legend outside the plot area
+legend(x = 3.0, y = 50, legend = c("1. Not difficult", "2. A little difficult", "3. Moderately difficult", "4. Very difficult", "5. Extremely difficult"), title = "Difficulty Level", cex = 0.55)
+
+# Perform the Wilcoxon rank sum test with custom category names
+wilcox_test_wait <- wilcox.test(x = subset_republican$regdiff, y = subset_democrat$regdiff,
+                                  alternative = "two.sided", mu = 0, paired = FALSE,
+                                  conf.int = TRUE, correct = TRUE,
+                                  exact = NULL, conf.level = 0.95)
+
+# Display the results of the test
+print(wilcox_test_wait)
+
+# Calculate Cohen's d
+#cat("Cohen's d =", cohensD(subset_republican$regdiff, subset_democrat$regdiff), "\n")
+
+```
+```{r}
+
+# Subset the data for Republicans and Democrats
+subset_republican <- anes[anes$party_affiliation == "Republican" & anes$regdiff >= 1 & anes$regdiff <= 5, ]
+subset_democrat <- anes[anes$party_affiliation == "Democrat" & anes$regdiff >= 1 & anes$regdiff <= 5, ]
+
+# Define the breaks for the histogram bins
+breaks <- seq(0.5, 5.5, by = 1)  # Define breaks for bins of width 1
+
+# Create a histogram for Republicans
+hist_republican <- ggplot(data = subset_republican, aes(x = regdiff)) +
+  geom_histogram(binwidth = 1, fill = "red", breaks = breaks) +
+  labs(
+    title = "Republican Registering Difficulty",
+    x = "Registering Difficulty",
+    y = "Frequency"
+  ) +
+  xlim(1, 5) +
+  ylim(0, 60) +
+  scale_x_continuous(breaks = 1:5) +
+  scale_fill_identity() +  # Set the fill color
+  theme_minimal() +  # Choose a plot theme
+  theme(legend.position = "right") +  # Place the legend on the right
+  ggtitle("Republican Registering Difficulty") +  # Adjust title
+  theme(plot.title = element_text(size = 14))  # Adjust title size
+
+# Create a histogram for Democrats
+hist_democrat <- ggplot(data = subset_democrat, aes(x = regdiff)) +
+  geom_histogram(binwidth = 1, fill = "blue", breaks = breaks) +
+  labs(
+    title = "Democrat Registering Difficulty",
+    x = "Registering Difficulty",
+    y = "Frequency"
+  ) +
+  xlim(1, 5) +
+  ylim(0, 60) +
+  scale_x_continuous(breaks = 1:5) +
+  scale_fill_identity() +  # Set the fill color
+  theme_minimal() +  # Choose a plot theme
+  theme(legend.position = "none")  # Remove the legend
+
+# Create a common legend with line breaks and font size
+legend_labels <- "Registering Difficulty Scale\n1. Not difficult\n2. A little difficult\n3. Moderately difficult\n4. Very difficult\n5. Extremely difficult"
+
+common_legend <- ggplot() +
+  annotate("text", x = 0.5, y = 0.5, label = legend_labels, size = 3.5) +
+  theme_void()
+
+# Combine the plots and the common legend
+final_plot <- (hist_republican + hist_democrat) /
+  common_legend
+
+# Set the height of the top plot (hist_republican) to control the gap
+final_plot <- final_plot + plot_layout(heights = c(2, 2))
+
+# Print the final combined plot
+print(final_plot)
+
+# Perform the Wilcoxon rank sum test
+wilcox_test_result <- wilcox.test(x = subset_republican$regdiff, y = subset_democrat$regdiff,
+                                  alternative = "two.sided", mu = 0, paired = FALSE,
+                                  conf.int = TRUE, correct = TRUE,
+                                  conf.level = 0.95, 
+                                  method = "exact")
+wilcox_test_result
+
+
+# Effect size calculation using 
+
+subset_data <- subset(anes, party_affiliation %in% c("Republican", "Democrat"))
+
+effect_size <- wilcox_effsize(
+  data = subset_data,
+  formula = regdiff ~ party_affiliation,
+  conf.level = 0.95,
+  method = "effsize",
+  paired = FALSE
+)
+cat("Effect Size:", effect_size$effsize, "\n")
+
+
+# Run a Mann Whitney test to confirm effect size 
+mannwhitney(
+  data = anes,
+  x = regdiff,
+  grp = party_affiliation,
+  distribution = "asymptotic",
+  out = c("txt", "viewer", "browser"),
+  encoding = "UTF-8",
+  file = NULL
+)
+
+```
+ --- Still working on this.  Trying to count the number of multipunch responses from each group -- 
+
+```{r}
+
+# Create a new column "multipunch_total" with the sum of "1" occurrences
+columns_to_include <- paste0("vharder_", 0:10)
+
+# Create a new column "multipunch_total" with the sum of "1" occurrences in the selected columns
+anes <- anes %>%
+  mutate(multipunch_total = rowSums(select(anes, all_of(columns_to_include)) == 1))
+
+
+# Display the number of valid "multipunch_total" values are present for Republican or Democrat
+
+rep_count_multi <- sum(anes$party_affiliation == "Republican" & anes$multipunch_total)
+dem_count_multi <- sum(anes$party_affiliation == "Democrat" & anes$multipunch_total)
+
+cat("Republican voters responded to multipunch question about difficulties:", rep_count_multi, "\n")
+cat("Democratic voters responded to multipunch question about difficulties:", dem_count_multi, "\n")
+
+unique(anes$multipunch_total)
+
+```
+```{r}
+
+# Define subsets of groups
+subset_republican <- anes[anes$party_affiliation == "Republican", ]
+subset_democrat <- anes[anes$party_affiliation == "Democrat", ]
+
+# Define the unique values of multipunch_total
+unique_values <- c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11)
+
+# Create a function to count occurrences of unique values within a subset
+count_occurrences <- function(subset, values) {
+  data <- data.frame(Value = values, Count = sapply(values, function(val) sum(subset$multipunch_total == val)))
+  return(data)
+}
+
+# Create tables for each subset
+republican_table <- count_occurrences(subset_republican, unique_values)
+democrat_table <- count_occurrences(subset_democrat, unique_values)
+
+# Rename columns for clarity
+colnames(republican_table) <- c("Mutlipunch", "Count (Republican)")
+colnames(democrat_table) <- c("Mutlipunch", "Count (Democrat)")
+
+# Combine the tables into one
+combined_table <- merge(republican_table, democrat_table, by = "Mutlipunch", all = TRUE)
+
+# Fill missing values with 0
+combined_table[is.na(combined_table)] <- 0
+
+# Print the combined table
+print(combined_table)
+
+glimpse(combined_table)
+
+
+```
+
+```{r}
+
+### "Multipunch"
+
+# Subset the data for Republicans and Democrats
+subset_republican <- anes[anes$party_affiliation == "Republican" & anes$multipunch_total, ]
+subset_democrat <- anes[anes$party_affiliation == "Democrat" & anes$multipunch_total, ]
+
+# Combine Republican and Democrat data into one data frame with a party column
+anes_combined <- rbind(
+  data.frame(Party = "Republican", subset_republican),
+  data.frame(Party = "Democrat", subset_democrat)
+)
+
+# Create a histogram for both parties side by side
+ggplot(data = anes_combined, aes(x = multipunch_total)) +
+  geom_histogram(bins = 11, aes(fill = Party), position = "dodge") +
+  labs(
+    title = "Voting multipunch by Party",
+    x = "Multipunch Count",
+    y = "Frequency"
+  ) +
+  xlim(c(0, 11)) +
+  ylim(c(0, 100)) +
+  facet_wrap(~Party)
+
+
+# Perform the Wilcoxon rank sum test with custom category names
+wilcox_test_wait <- wilcox.test(x = subset_republican$multipunch_total, y = subset_democrat$multipunch_total,
+                                  alternative = "two.sided", mu = 0, paired = FALSE,
+                                  conf.int = TRUE, correct = TRUE,
+                                  conf.level = 0.95)
+
+?wilcox.test
+
+# Assuming you have defined your subsets as follows:
+subset_republican <- anes[anes$party_affiliation == "Republican", ]
+subset_democrat <- anes[anes$party_affiliation == "Democrat", ]
+
+
+?wilcox.test
+
+# Display the results of the test
+print(wilcox_test_wait)
+
+# Effect size calculation using 
+
+subset_data <- subset(anes, party_affiliation %in% c("Republican", "Democrat"))
+
+effect_size <- wilcox_effsize(
+  data = subset_data,
+  formula = multipunch_total ~ party_affiliation,
+  conf.level = 0.95,
+  method = "effsize",
+  paired = FALSE
+)
+cat("Effect Size:", effect_size$effsize, "\n")
+
+
+# Run a Mann Whitney test to confirm effect size 
+mannwhitney(
+  data = anes,
+  x = multipunch_total,
+  grp = party_affiliation,
+  distribution = "asymptotic",
+  out = c("txt", "viewer", "browser"),
+  encoding = "UTF-8",
+  file = NULL
+)
+
+# Calculate Cohen's d
+#cat("Cohen's d =", cohensD(subset_republican$multipunch_total, subset_democrat$multipunch_total), "\n")
+
+```
