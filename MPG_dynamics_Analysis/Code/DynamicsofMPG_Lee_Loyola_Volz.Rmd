@@ -1,0 +1,720 @@
+
+
+---
+title: "The Road to Efficiency: Exploring the Dynamics of MPG in 1985 Cars"
+subtitle: " DATASCI 203: Lab #2"
+author: " Maria Lee, Jackie Loyola and Tracy Volz"
+output:
+  bookdown::pdf_document2: 
+    toc: true
+    number_sections: true
+    html_document:
+      mathjax: "default"
+geometry: margin=0.8in
+
+---
+\newpage
+\setcounter{page}{1}
+\thispagestyle{plain} 
+
+```{r, include=FALSE}
+
+
+```
+
+```{r setup, load packages and set options, include=FALSE}
+
+library(lmtest)
+library(sandwich)
+library(stargazer)
+library(tidyverse)
+#library(moments)
+library(ggplot2)
+library(dplyr)
+library(car)
+#library(nortest)
+library(MASS)
+library(knitr)
+library(kableExtra)
+library(ggpubr)
+library(rstatix)
+library(sjstats)
+library(gridExtra)
+library(gtable)
+library(DescTools)
+library(coin)
+library(patchwork)
+library(gridGraphics)
+library(GGally)
+library(stats)
+```
+
+# Introduction
+
+The 1970s oil crisis, triggered by the Arab oil embargo of 1973, has had a profound impact on the automotive industry ([Corbett, 2013](#Corbett)). The crisis not only drastically increased oil prices around the globe, but it led to a significant shift in consumer preferences and forced automakers to reevaluate their production strategies. With gas costs skyrocketing, the demand for more fuel-efficient cars surged across the country.
+
+In response to the 1970s oil crisis, Congress established the Corporate Average Fuel Economy (CAFE) standards in 1975 ([UCSUSA, 2017](#UCSUSA)). The CAFE standards require a manufacturer’s overall average fuel economy to meet or exceed the established baseline, which is set in miles-per-gallon (MPG).  
+
+\begin{wrapfigure}{r}{0.52\textwidth}
+  \includegraphics[width=0.5\textwidth]{~/r_bridge/code/my_plots/lab_2/Causal Diagram_1.png}
+\end{wrapfigure}
+
+This study estimates the fuel efficiency of a car utilizing the observations listed from the 1985 Ward’s Automotive Yearbook ([Schlimmer, 1987](#Schlimmer)). Using linear regression models, our intention is to estimate how average miles per gallon (MPG) is influenced by the car’s weight, and additionally, how this effect varies with other factors such as horsepower, fuel system, height, and the car’s make (see Figure 1 Causal Diagram).  We are specifically interested in MPG predictions as they relate to our client, Mercedes Benz.  
+
+```{r import and clean dataset, include=FALSE}
+auto_data <- read.table("imports-85.data", header = FALSE)
+
+# Extract the values from column V1
+column_v1_values <- auto_data$V1
+
+# Convert the values to a data frame
+data <- read.table(text = column_v1_values, sep = ",", header = FALSE)
+
+# Define the desired column names
+column_names <- c("symboling", "normalized_losses", "make", "fuel_type", "aspiration", "num_of_doors", "body_style", "drive_wheels", "engine_location", "wheel_base","length", "width", "height", "curb_weight", "engine_type","num_of_cylinders", "engine_size", "fuel_system", "bore", "stroke", "compression_ratio", "horsepower", "peak_rpm", "city_mpg", "highway_mpg", "price" )
+
+# Set the column names of the data frame
+colnames(data) <- column_names
+
+# Add a column called average_mpg
+data$average_mpg <- (data$city_mpg + data$highway_mpg) / 2
+
+# Convert 'horsepower' and 'curb_weight' to numeric
+data <- data %>%
+  mutate(horsepower = as.numeric(horsepower),
+         curb_weight = as.numeric(curb_weight),
+         height = as.numeric(height))
+
+# Add a derived column 'hp_to_weight_ratio'
+data <- data %>%
+  mutate(hp_to_weight_ratio = horsepower / curb_weight)
+
+# Add origin column
+data <- data %>%
+mutate(origin = ifelse(make %in% c("toyota", "datsun", "nissan", "honda", "mazda", "subaru", "isuzu", "mitsubishi"), "Japan",
+                  ifelse(make %in% c("volkswagen", "bmw", "audi", "opel", "mercedes-benz", "porsche"), "Germany", 
+                  ifelse(make %in% c("amc", "chevrolet", "dodge", "ford", "plymouth", "chrysler", "pontiac", "oldsmobile", "buick", "mercury", "hi", "capri", "cadillac"), "United States",
+                  ifelse(make %in% c("saab", "volvo"), "Sweden",
+                  ifelse(make %in% c("renault", "peugeot", "peugot"), "France",
+                  ifelse(make %in% c("triumph", "jaguar"), "United Kingdom",
+                  ifelse(make %in% c("fiat", "alfa-romero"), "Italy",make))))))))
+
+# Add fuel delivery grouping
+data <- data %>%
+  mutate(delivery = ifelse(fuel_system %in% c("1bbl", "2bbl", "4bbl"), "Carburetor",
+                    ifelse(fuel_system %in% c("mfi", "mpfi", "spdi", "spfi", "idi"), "Injection", "Other")))
+
+data <- data %>%
+  mutate(delivery_name = case_when(
+    fuel_system %in% c("1bbl") ~ "1 Barrel Carburetor",
+    fuel_system %in% c("2bbl") ~ "2 Barrel Carburetor",
+    fuel_system %in% c("4bbl") ~ "4 Barrel Carburetor",
+    fuel_system %in% c("mfi", "mpfi") ~ "Multi-Point Injection",
+    fuel_system %in% c("spdi", "spfi") ~ "Single-Point Injection",
+    fuel_system %in% c("idi") ~ "Direct Injection",
+    TRUE ~ "Other"
+  ))
+
+data <- data[data$make != "porsche",]
+data <- data[data$make != "jaguar",]
+data <- data[data$make != "alfa-romero",]
+data <- data[!is.na(data$hp_to_weight_ratio), ]
+
+ggplot(data, aes(x = hp_to_weight_ratio)) +
+  geom_histogram(fill = "blue", color = "black") +
+  labs(title = "Histogram of hp_to_weight_ratio (minus sports cars)",
+       x = "hp_to_weight_ratio",
+       y = "Frequency")
+
+```
+
+# Data and Methodology 
+
+Our dataset includes 205 rows of observational data with 25 columns representing the car's features (ex: MPG, fuel system, weight, and horsepower).  Two rows were removed from the dataset because they did not report values for horsepower.  Eleven rows were removed because they contained information from a different population of cars in which the manufacturers (Porsche, Alfa-Romero, Jaguar) focus on high performance sports cars’, which generally have bigger engines with a lighter body weight ([YM, 2019](#YM)).  
+
+Average MPG was calculated as the sum of "City MPG" and "Highway MPG" divided by two; the resultant value was captured in a derived column called "Average MPG."  To account for a broad categories of fuel systems, "spdi" and "spfi" were included in a combined category called "Single-Point Injection"; similarly, "mfi" and "mpfi" were included in a combined category called "Multi-Point Injection" ([Sharma, 2022](#Sharma)).  Reference Table 1 for the frequency of six fuel system categories explored in this linear model. The dataset included the "curb weight" which refers to the total weight of the vehicle including all standard equipment and fluids. Using curb weight, we can determine the MPGs for ready-to-operate vehicles ([KBB, 2022](#KBB)). 
+Our original intent was to capture "Make" as a covariate within our model, however, during exploratory data analysis, we discovered that "Make" and "Fuel System" system were perfectly colinear.  Rather than omitting this valuable information from our analysis, we created a derived column called "Origin" which represents the country where the "Make" is produced.  Reference Table 2 for the frequency of 5 origin categories explored in this linear model.
+
+```{r print frequency tables side-by-side, echo=FALSE , out.width="95%", fig.align='center'}
+knitr::include_graphics("~/r_bridge/code/my_plots/lab_2/combined_tables.png")
+```
+The final dataset included 192 rows of complete data for Weight (Wgt), Horsepower (HP), Height (Hgt), Origin and Fuel System (Fuel).  60 rows were randomly selected as our training dataset to perform exploratory data analysis, including assessment of requirements for classic linear models (CLM). The confirmation dataset was created by omitting training data rows from the full dataset. The scatterplots of the raw training data revealed the numeric data of interest (weight, horsepower and height) vs average MPG were curved, and would likely require different transformations applied to each variable.
+
+The following models were evaluated to determine if they met CLM requirements:
+ 
+ - Model 1: Avg. MPG = $\beta_0$ +  $\beta_1$(Wgt)
+ 
+ - Model 2: Avg. MPG = $\beta_0$ + $\beta_1$(Wgt) + $\beta_2$(HP) + $\beta_3$(Hgt)
+ 
+ - Model 3: Avg. MPG = $\beta_0$ + $\beta_1$(Wgt) + $\beta_2$(HP) + $\beta_3$(Hgt) + $\beta_4$(Fuel) + $\beta_4$(Origin)
+```{r Frequency of origin, include=FALSE}
+
+# Use the table function to count occurrences
+origin_counts <- table(data$origin)
+
+# Print the result
+print(origin_counts)
+
+# Convert the table to a data frame
+frequency_table <- as.data.frame(origin_counts)
+
+# Add a column for proportions
+frequency_table$Proportion <- round(frequency_table$Freq / sum(frequency_table$Freq), digits = 2)
+
+# Rename the columns
+colnames(frequency_table) <- c("Origin", "Count (Origin)", "Proportion (Origin)")
+
+# Print the table using kableExtra
+#kable(
+#  frequency_table,
+#  "html",
+#  align = "c",  # Center-align columns
+#  caption = "Frequency Table for Origin",
+#) %>%
+#  kable_styling(full_width = FALSE) %>%
+#  column_spec(1, bold = TRUE) 
+
+```
+```{r Frequency of fuel system, include=FALSE}
+
+# Use the table function to count occurrences
+delivery_name_counts <- table(data$delivery_name)
+
+# Print the result
+print(delivery_name_counts)
+
+# Convert the table to a data frame
+frequency_table_fuel_name <- as.data.frame(delivery_name_counts)
+
+# Add a column for proportions
+frequency_table_fuel_name$Proportion <- round(frequency_table_fuel_name$Freq / sum(frequency_table_fuel_name$Freq), digits = 2)
+
+# Rename the columns
+colnames(frequency_table_fuel_name) <- c("Fuel System", "Count (Fuel System)", "Proportion (Fuel System)")
+
+# Print the table using kableExtra
+#kable(
+#  frequency_table_fuel_name,
+#  "html",  # Use "latex" for LaTeX output
+#  align = "c",  # Center-align columns
+#  caption = "Frequency Table for Fuel System",
+#) %>%
+#  kable_styling(full_width = FALSE) %>%
+#  column_spec(1, bold = TRUE)  
+
+```
+```{r, include=FALSE}
+
+# Create a training dataset -- 60 rows of data
+set.seed(2023) 
+training_data <- data[sample(nrow(data), 60), ]
+
+```
+```{r, include=FALSE}
+
+plot1 <- ggplot(training_data, aes(x = curb_weight, y = average_mpg)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "loess", formula = "y ~ x", size = 0.5, color = "yellow") +
+  labs(title = "Plot #1: Weight (lbs) vs MPG",
+       x = "Weight (lbs)",
+       y = "Average MPG") +
+  coord_fixed(ratio = 35) +
+  theme(
+    axis.title = element_text(size = 7),  # Adjust font size for axis titles
+    axis.text = element_text(size = 7),   # Adjust font size for axis labels
+    plot.title = element_text(size = 8)   # Adjust font size for plot title
+  )
+
+plot2 <- ggplot(training_data, aes(x = horsepower, y = average_mpg)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "loess", formula = "y ~ x", size = 0.5, color = "blue") +
+  labs(title = "Plot #2: Horsepower vs MPG",
+       x = "Horsepower",
+       y = "Average MPG") +
+  coord_fixed(ratio = 2.3) +
+  theme(
+    axis.title = element_text(size = 7),  # Adjust font size for axis titles
+    axis.text = element_text(size = 7),   # Adjust font size for axis labels
+    plot.title = element_text(size = 8)   # Adjust font size for plot title
+  )
+
+plot3 <- ggplot(training_data, aes(x = height, y = average_mpg)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "loess", formula = "y ~ x", size = 0.5, color = "red") +
+  labs(title = "Plot #3: Height (in) vs MPG",
+       x = "Height (in)",
+       y = "Average MPG") +
+  coord_fixed(ratio = 0.2) +
+  theme(
+    axis.title = element_text(size = 7),  # Adjust font size for axis titles
+    axis.text = element_text(size = 7),   # Adjust font size for axis labels
+    plot.title = element_text(size = 8)   # Adjust font size for plot title
+  )
+```
+```{r, print plots side-by-side, include=FALSE}
+
+grid.arrange(plot1, plot2, plot3, ncol = 3)
+
+```
+The plots for Residuals vs Fitted Values were fan-shaped (an indication the error terms in these models are heteroskedastic) and the error terms were not normally distributed.  To overcome these challenges, a Box-Cox transformation was applied to the Y variable (Average MPG) of Model 3.  The Box-Cox transformation is a collection of transformations designed to improve heteroscedascity and nonnormality of the error terms ([Rossiter, 2019](#Rossiter)).  To visualize improvements produced by the Box-Cox transformation, reference plots showing Model 2 - 3T: Residuals vs. Fitted values.With the transformation, Model 3(T) has a more uniform spread of residuals around the zero line, indicating a better fit and more reliable estimates.  
+```{r Linear Models: 1 - 3T, include=FALSE}
+#https://www.css.cornell.edu/faculty/dgr2/_static/files/R_html/Transformations.html
+
+# Extract the response variable from the model
+response_variable_3 <- training_data$average_mpg
+
+# Create a formula for the Box-Cox transformation
+formula_bc <- as.formula(paste("average_mpg ~ curb_weight + horsepower + height + delivery_name + origin"))
+
+# Run the Box-Cox transformation
+boxcox_results_3 <- boxcox(formula_bc, data = training_data)
+
+optimal_lambda_3 <- boxcox_results_3$x[which.max(boxcox_results_3$y)]
+#cat("optimal lambda: ", optimal_lambda_3)
+
+# Plot the Box-Cox transformation
+#plot(boxcox_results_3)
+
+# Apply the Box-Cox transformation to the response variable
+transformed_response_3 <- ((response_variable_3^optimal_lambda_3) - 1) / optimal_lambda_3
+
+# Update the model formula with the transformed response variable
+model_1 <- lm(average_mpg ~ curb_weight, data = training_data)
+model_2 <- lm(average_mpg ~ curb_weight + horsepower + height, data = training_data)
+model_3 <- lm(average_mpg ~ curb_weight + horsepower + height + delivery_name + origin, data = training_data)
+model_transformed_3 <- lm(transformed_response_3 ~ curb_weight + horsepower + height + delivery_name + origin, data = training_data)
+
+# Add model residuals
+training_data$model_residuals_transformed_3 <- residuals(model_transformed_3)
+
+stargazer(
+  model_1, model_2, model_3, model_transformed_3, type = 'Latex'
+)
+```
+```{r Models: 1 - 3T -- Assumption:  Linear Conditional Expectation, include=FALSE}
+plot(model_1, which = 1)
+plot(model_2, which = 1)
+plot(model_3, which = 1)
+plot(model_transformed_3, which = 1)
+
+model_2_res_fit <- training_data %>%
+  mutate(
+    model_predicted_2 = predict(model_2),
+    model_residuals_2 = resid(model_2)
+  ) %>%
+  ggplot(aes(x = model_predicted_2, y = model_residuals_2)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "loess", formula = "y ~ x", se = FALSE, size = 0.5, color = "orange") +
+  labs(title = "Model 2:  Residuals vs. Fitted",
+       x = "Fitted Values",
+       y = "Residuals") +
+  coord_fixed(ratio = .62) +
+  theme(
+    axis.title = element_text(size = 7),  # Adjust font size for axis titles
+    axis.text = element_text(size = 7),   # Adjust font size for axis labels
+    plot.title = element_text(size = 8)   # Adjust font size for plot title
+  )
+
+model_3_res_fit <- training_data %>%
+  mutate(
+    model_predicted_3 = predict(model_3),
+    model_residuals_3 = resid(model_3)
+  ) %>%
+  ggplot(aes(x = model_predicted_3, y = model_residuals_3)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "loess", formula = "y ~ x", se = FALSE, size = 0.5, color = "purple") + 
+  labs(title = "Model 3:  Residuals vs. Fitted",
+       x = "Fitted Values",
+       y = "Residuals") +
+  coord_fixed(ratio = 1.3) +
+  theme(
+    axis.title = element_text(size = 7),  # Adjust font size for axis titles
+    axis.text = element_text(size = 7),   # Adjust font size for axis labels
+    plot.title = element_text(size = 8)   # Adjust font size for plot title
+  )
+
+model_3T_res_fit <- training_data %>%
+  mutate(
+    model_predicted_T3 = predict(model_transformed_3),
+    model_residuals_T3 = resid(model_transformed_3)
+  ) %>%
+  ggplot(aes(x = model_predicted_T3, y = model_residuals_T3)) +
+  geom_point(size = .5) +
+  geom_smooth(method = "loess", formula = "y ~ x", se = FALSE, size = 0.5, color = "green") + 
+  labs(title = "Model 3(T): Residuals. vs Fitted",
+       x = "Fitted Values",
+       y = "Residuals") +
+  coord_fixed(ratio = 3.1) +
+  theme(
+    axis.title = element_text(size = 7),  # Adjust font size for axis titles
+    axis.text = element_text(size = 7),   # Adjust font size for axis labels
+    plot.title = element_text(size = 8)   # Adjust font size for plot title
+  )
+```
+```{r, print plots model residuals side-by-side, echo=FALSE,}
+
+grid.arrange(model_2_res_fit, model_3_res_fit, model_3T_res_fit, ncol = 3)
+
+```
+```{r Create confirmation dataset, include=FALSE}
+confirmation_data <- anti_join(data, training_data)
+```
+```{r Models: 1 - 3T -- Linear Model (Confirmation), include=FALSE}
+
+# Extract the response variable from the model
+conf_response_variable_3 <- confirmation_data$average_mpg
+
+# Create a formula for the Box-Cox transformation
+formula_bc <- as.formula(paste("average_mpg ~ curb_weight + horsepower + height + delivery_name + origin"))
+
+# Run the Box-Cox transformation
+conf_boxcox_results_3 <- boxcox(formula_bc, data = confirmation_data)
+
+conf_optimal_lambda_3 <- conf_boxcox_results_3$x[which.max(conf_boxcox_results_3$y)]
+cat("optimal lambda: ", conf_optimal_lambda_3)
+
+# Plot the Box-Cox transformation
+plot(conf_boxcox_results_3)
+
+# Apply the Box-Cox transformation to the response variable
+conf_transformed_response_3 <- ((conf_response_variable_3^conf_optimal_lambda_3) - 1) / conf_optimal_lambda_3
+
+# Update the model formula with the transformed response variable
+conf_model_1 <- lm(average_mpg ~ curb_weight                                                                    , data = confirmation_data)
+conf_model_2 <- lm(average_mpg ~ curb_weight + horsepower + height                                              , data = confirmation_data)
+conf_model_3 <- lm(average_mpg ~ curb_weight + horsepower + height + delivery_name + origin                       , data = confirmation_data)
+conf_model_transformed_3 <- lm(conf_transformed_response_3 ~ curb_weight + horsepower + height + delivery_name + origin, data = confirmation_data)
+
+# add model residuals
+confirmation_data$conf_model_residuals_transformed_3 <- residuals(conf_model_transformed_3)
+
+stargazer(
+  conf_model_1, conf_model_2, conf_model_3, conf_model_transformed_3, 
+  title = "Linear Regression Model of MPG",
+  type = 'text',
+  ci = TRUE, ci.level = 0.95,
+  star.cutoffs = c(0.05, 0.01, 0.001),
+  covariate.labels = c(
+    "Weight", "Horsepower", "Height", "2bbl Carborator", "4bbl Carborator",
+    "Direct Injection", "Multi-Point Injection", "Single-Point Injection",
+    "Germany", "Japan", "Sweden", "United States")
+)
+
+```
+```{r Models: 2 - 3T -- Assumption:  No Perfect Collinearity (Confirmation), include=FALSE}
+
+vif(conf_model_2)
+vif(conf_model_2) > 4
+vif(conf_model_3)
+vif(conf_model_3) > 4
+vif(conf_model_transformed_3)
+vif(conf_model_transformed_3) > 4
+
+```
+```{r Models: 1 - 3T -- Assumption:  Linear Conditional Expectation (Confirmation), include=FALSE}
+
+confirmation_data %>%
+  mutate(
+    conf_model_predicted_1 = predict(conf_model_1),
+    conf_model_residuals_1 = resid(conf_model_1)
+  ) %>%
+  ggplot(aes(x = conf_model_predicted_1, y = conf_model_residuals_1)) +
+  geom_point() +
+  geom_smooth(method = "loess", formula = "y ~ x") + 
+  labs(title = "Residuals vs. Fitted Values (Model 1)",
+       x = "Fitted Values",
+       y = "Residuals")
+
+confirmation_data %>%
+  mutate(
+    conf_model_predicted_2 = predict(conf_model_2),
+    conf_model_residuals_2 = resid(conf_model_2)
+  ) %>%
+  ggplot(aes(x = conf_model_predicted_2, y = conf_model_residuals_2)) +
+  geom_point() +
+  geom_smooth(method = "loess", formula = "y ~ x") + 
+  labs(title = "Residuals vs. Fitted Values (Model 1)",
+       x = "Fitted Values",
+       y = "Residuals")
+
+confirmation_data %>%
+  mutate(
+    conf_model_predicted_3 = predict(conf_model_3),
+    conf_model_residuals_3 = resid(conf_model_3)
+  ) %>%
+  ggplot(aes(x = conf_model_predicted_3, y = conf_model_residuals_3)) +
+  geom_point() +
+  geom_smooth(method = "loess", formula = "y ~ x") + 
+  labs(title = "Residuals vs. Fitted Values (Model 3)",
+       x = "Fitted Values",
+       y = "Residuals")
+
+confirmation_data %>%
+  mutate(
+    conf_model_predicted_T3 = predict(conf_model_transformed_3),
+    conf_model_residuals_T3 = resid(conf_model_transformed_3)
+  ) %>%
+  ggplot(aes(x = conf_model_predicted_T3, y = conf_model_residuals_T3)) +
+  geom_point() +
+  geom_smooth(method = "loess", formula = "y ~ x") + 
+  labs(title = "Residuals vs. Fitted Values (Model 3T)",
+       x = "Fitted Values",
+       y = "Residuals")
+
+```
+```{r Models: 1 - 3T -- Assumption:  Constant Error Variance (Confirmation), include=FALSE}
+
+plot(conf_model_1, which = 3)
+bptest(conf_model_1, studentize = FALSE)
+
+plot(conf_model_2, which = 3)
+bptest(conf_model_2, studentize = FALSE)
+
+plot(conf_model_3, which = 3)
+bptest(conf_model_3, studentize = FALSE)
+
+plot(conf_model_transformed_3, which = 3)
+bptest(conf_model_transformed_3, studentize = FALSE)
+
+```
+```{r Models: 1 - 3T -- Assumption:  Normal Distribution of Errors (Confirmation), include=FALSE}
+
+# Get the predicted values and residuals
+conf_fitted_values_1 <- predict(conf_model_1)
+conf_residuals_values_1 <- residuals(conf_model_1)
+
+# Plot Normal Q-Q Plot
+qqnorm(conf_residuals_values_1)
+qqline(conf_residuals_values_1)
+
+shapiro.test(conf_residuals_values_1)
+
+hist(conf_residuals_values_1, 
+     breaks = 100, 
+     main = "Histogram of Residuals with Normal Distribution Curve (Model 1)", 
+     xlab = "Residuals",
+     xlim = c(min(conf_residuals_values_1), max(conf_residuals_values_1)),  
+     probability = TRUE  # To display densities instead of frequencies
+)
+
+# Add normal distribution curve
+mu <- mean(conf_residuals_values_1)
+sigma <- sd(conf_residuals_values_1)
+x <- seq(min(conf_residuals_values_1), max(conf_residuals_values_1), length = 100)
+y <- dnorm(x, mean = mu, sd = sigma)
+lines(x, y, col = "red", lwd = 2)
+
+## -- 
+
+# Get the predicted values and residuals
+conf_fitted_values_2 <- predict(conf_model_2)
+conf_residuals_values_2 <- residuals(conf_model_2)
+
+# Plot Normal Q-Q Plot
+qqnorm(conf_residuals_values_2)
+qqline(conf_residuals_values_2)
+
+shapiro.test(conf_residuals_values_2)
+
+hist(conf_residuals_values_2, 
+     breaks = 100, 
+     main = "Histogram of Residuals with Normal Distribution Curve (Model 2)", 
+     xlab = "Residuals",
+     xlim = c(min(conf_residuals_values_2), max(conf_residuals_values_2)),  
+     probability = TRUE  # To display densities instead of frequencies
+)
+
+# Add normal distribution curve
+mu <- mean(conf_residuals_values_2)
+sigma <- sd(conf_residuals_values_2)
+x <- seq(min(conf_residuals_values_2), max(conf_residuals_values_2), length = 100)
+y <- dnorm(x, mean = mu, sd = sigma)
+lines(x, y, col = "red", lwd = 2)
+
+## -- 
+
+# Get the predicted values and residuals
+conf_fitted_values_3 <- predict(conf_model_3)
+conf_residuals_values_3 <- residuals(conf_model_3)
+
+# Plot Normal Q-Q Plot
+qqnorm(conf_residuals_values_3)
+qqline(conf_residuals_values_3)
+
+shapiro.test(conf_residuals_values_3)
+
+hist(conf_residuals_values_3, 
+     breaks = 100, 
+     main = "Histogram of Residuals with Normal Distribution Curve (Model 3)", 
+     xlab = "Residuals",
+     xlim = c(min(conf_residuals_values_3), max(conf_residuals_values_3)),  
+     probability = TRUE  # To display densities instead of frequencies
+)
+
+# Add normal distribution curve
+mu <- mean(conf_residuals_values_2)
+sigma <- sd(conf_residuals_values_2)
+x <- seq(min(conf_residuals_values_2), max(conf_residuals_values_2), length = 100)
+y <- dnorm(x, mean = mu, sd = sigma)
+lines(x, y, col = "red", lwd = 2)
+
+## -- 
+
+# Get the predicted values and residuals
+conf_fitted_values_3T <- predict(conf_model_transformed_3)
+conf_residuals_values_3T <- residuals(conf_model_transformed_3)
+
+# Plot Normal Q-Q Plot
+qqnorm(conf_residuals_values_3T)
+qqline(conf_residuals_values_3T)
+
+shapiro.test(conf_residuals_values_3T)
+
+hist(conf_residuals_values_3T, 
+     breaks = 100, 
+     main = "Histogram of Residuals with Normal Distribution Curve", 
+     xlab = "Residuals",
+     xlim = c(min(conf_residuals_values_3T), max(conf_residuals_values_3T)),  
+     probability = TRUE  # To display densities instead of frequencies
+)
+
+# Add normal distribution curve
+mu <- mean(conf_residuals_values_3T)
+sigma <- sd(conf_residuals_values_3T)
+x <- seq(min(conf_residuals_values_3T), max(conf_residuals_values_3T), length = 100)
+y <- dnorm(x, mean = mu, sd = sigma)
+lines(x, y, col = "red", lwd = 2)
+
+```
+# Results
+
+A confirmation dataset was created by removing training data rows from full dataset.  Models 1 - 3T were generated (again) using the confirmation dataset of n=132.  All classic linear model requirements were re-evaluated for the confirmation dataset:
+
+ - Identical and Independent Distribution (IID): Presence of multiple vehicles originating from the same car brand, introduce potential dependencies in the data. Also, geographical clustering exists with several companies originating from the same country, so this dataset fails to meet strict IID assumptions. Due to the nature of the automotive industry these IID challenges are unavoidable.  However, we proceeded because each row represents a unique car (ie: there are no duplicates) and each car is from the same year (1985).  
+
+ - No Perfect Collinearity:  Calculated variance inflation factors for Models 2 - 3T range between 1.6 and 8.59.  While a VIF greater than 5 can be an indication collinearity of our variables exists, a calculated value demonstrates our matrices were invertible and therefore not perfectly colinear ([Wikimedia, 2023](#Wikimedia)). This requirement is satisfied.
+
+  - Linear Conditional Expectation:  Plots of Residuals vs. Fitted values for Model 1 - 3 exhibit curvature, an indication these models do not satisfy CLM requirements for linear conditional expectations.  The plot of Residuals vs. Fitted values for Transformed Model 3 exhibits a reasonably straight line at zero, with points distributed on both sides of zero ([STAT 462](#STAT 462)).  This requirement is satisfied for Model 3T (only).
+ 
+ - Constant Error Variance:  Plots of Residuals vs. Fitted values for Model 1 - 3 exhibit a fan-shaped pattern, an indication these models do not satisfy CLM requirements for Constant Error Variance.  The plot of Residuals vs. Fitted values for Transformed Model 3 exhibits a reasonably straight line at zero, and the residuals appear to be evenly distributed for Fitted values along the x axis ([STAT 462](#STAT 462)).  The p-value for the Breusch-Pagan test on Transformed Model 3 was 0.229, which confirms our observation.  This requirement is satisfied for Model 3T (only).
+ 
+ - Normal Distribution of Errors: QQ plots for Model 1-3 exhibit tails that deviate sharply from the line, indicating the errors are not normally distributed. The QQ plots for Transformed Model 3 closely follows the line which indicates the residuals are normally distributed.  The p-value for the Shapiro-Wilk normality test on Transformed Model 3 residuals was 0.097, which confirms our observation. This requirement is satisfied for Model 3T (only).  
+```{r print stargazer table, echo=FALSE , out.width="105%", fig.align='center'}
+knitr::include_graphics("~/r_bridge/code/my_plots/lab_2/stargazer_11Dec2023.png")
+```
+```{r, print plots side-by-side of confirmation data, out.width="37%", include=FALSE}
+knitr::include_graphics("~/r_bridge/code/my_plots/lab_2/qq_plot.png")
+knitr::include_graphics("~/r_bridge/code/my_plots/lab_2/residuals.png")
+
+```
+
+The regression models in Table 3, show the key coefficient weight was highly statistically significant ranging from -0.011 to -0.0001, showing that heavier cars have less fuel efficiency. Another important coefficient, horsepower, also had high significance with ranges from -0.119 to -0.001, revealing a trade off between power and efficiency. In the comprehensive model 3 and 3T, 4 barrel carburetor’s negative coefficient signifies a decrease in average MPG, indicating that while this aspect may boost engine power, it does so at the expense of fuel efficiency ([Brent, 2023](#Brent)).  Conversely, the positive coefficient for direct injection indicates an increase in average MPG, providing a dual benefit of power and efficiency ([Hawley, 2022](#Hawley)). Model 3T, with an R-squared value of 0.906, demonstrates that approximately 90.6% of the variability in MPG is explained by the coefficients, showing its strong predictive power. The F-statistics of 95.042 for Model 3T, significant at p < 0.001, confirms that the variables used are collectively significant predictors of fuel efficiency, indicating a high degree of confidence in the model’s explanatory capabilities regarding average MPG outcome.
+
+```{r, print plots side-by-side of confirmation data _2, out.width="40%", include=FALSE}
+knitr::include_graphics("~/r_bridge/code/my_plots/lab_2/qq_plot.png")
+knitr::include_graphics("~/r_bridge/code/my_plots/lab_2/residuals.png")
+
+#\begin{wrapfigure}{r}{0.52\textwidth}
+#  \includegraphics[width=0.5\textwidth]{~/r_bridge/code/my_plots/lab_2/qq_plot.png}
+#\end{wrapfigure}
+```
+
+# Limitations
+
+Challenges in meeting the assumption of IID for CLM arise from various factors, including clustering of manufacturers in different geographical regions.  To address these challenges, we would propose a change in the selection process for the dataset. We would recommend recollecting the data and opting for a stratified sampling approach to ensure an even distribution based on both car make and country of origin to help mitigate the dependencies and better adhere to the IID assumption. 
+
+Accounting for engine fuel type, specifically if it is a diesel engine, poses a challenge as an omitted variable bias. Diesel engines are typically heavier than their gasoline counterparts due to their robust construction in order to increase their ability to withstand higher levels of stress (ie: +$\gamma$) ([Trust](#Trust)). But despite their weight, diesel engines often exhibit better fuel efficiency compared to gasoline engines due to the higher energy content of diesel fuel (ie: +$\pi$). We anticipate positive relationships with diesel fuel for both MPG and weight. Consequently, the true coefficient ($\beta_c$) is anticipated to be smaller than our estimated coefficient ($\beta_r$) because $\beta_c$ = -$\beta_r$ - (+$\gamma$)(+$\pi$).
+
+Similarly, the tire size of a car presents an omitted variable bias, as we lack the capability to incorporate this variable. Bigger tires are generally heavier (ie:+$\pi$) and require more power to overcome the rolling resistance (ie: -$\gamma$)([Energy.gov](#Energy.gov)). So a large tire size corresponds to a decrease in fuel economy and conversely a positive relationship with weight. Therefore, the true coefficient ($\beta_c$) is expected to be greater than our estimated coefficient ($\beta_r$) because $\beta_c$ = -$\beta_r$ - (-$\gamma$)(+$\pi$).
+
+# Conclusion
+Because the Transformed Model 3 met all CLM assumptions, we know that our regression analysis produces unbiased estimates, and the estimates for uncertainty are unbiased.  When we use average Mercedes parameters for “Multi-point injection” and “Direct Injection”, our model predicts an untransformed MPG of ~16.6 and MPG of ~23. Reference Table 4 for predicted MPG of reduced weights if all other parameters remain unchanged.  The initial causal model was updated to reflect relationships learned during our study (see Figure 2).
+```{r Transformed Model 3 Prediction (Confirmation), include=FALSE}
+# Assuming the coefficient for curb_weight is -0.0001
+coefficient_curb_weight <- -0.0001
+
+# Assuming the values for the other predictor variables
+new_data <- data.frame(
+  curb_weight = 3615,
+  horsepower = 123,
+  height = 57,
+  delivery_name = "Direct Injection",
+  origin = "Germany"
+  
+)
+
+# Calculate untransformed mpg
+conf_predicted_transformed_mpg <- predict(conf_model_transformed_3, newdata = new_data)
+conf_untransformed_mpg <- (-0.4646465 * conf_predicted_transformed_mpg + 1) ^ (1 / -0.4646465)
+
+# Print the result
+print(conf_untransformed_mpg)
+
+```
+```{r print causal daigram 2, echo=FALSE , out.width="95%", fig.align='center', fig.show='hold'}
+knitr::include_graphics("~/r_bridge/code/my_plots/lab_2/prediction_table_causal_dia.png")
+```
+While this analysis sheds light on estimating fuel efficiency for conventional cars, it is important to note that this dataset primarily consisted of vehicles made in 1985. This historical context suggests that the correlation between weight and MPG might not be as pronounced for modern vehicles compared to their older counterparts. However, the underlying principles remain relevant. Notably, the emergence of hybrid and electric vehicles, which often have heavier systems due to batteries and other components ([Valdes-Dapena, 2021](Valdes-Dapena)), reinforces the importance of reducing vehicle weight as well as other factors, such as horsepower. Despite these evolutions within the automobile industry, the foundational concepts drawn from this dataset remain applicable in understanding the dynamics of fuel efficiency. This underscores the necessity for ongoing research to explore the unique factors affecting efficiency to the increasingly varied type of vehicles.
+
+
+
+# References
+
+
+<div id="Brent"></div>
+Brent, K. (2023, August 8). 2-Barrel VS 4-Barrel Carburetors. CL Pony Parts.  
+https://www.cjponyparts.com/resources/2-barrel-vs-4-barrel-carb 
+
+<div id="Corbett"></div>
+Corbett, M. (2013, November 22). Oil shock of 1973–74. Federal Reserve History.  
+https://www.federalreservehistory.org/essays/oil-shock-of-1973-74
+
+<div id="Energy.gov"></div>
+Energy.gov. (n.d.). Tires and fuel economy.  
+https://www.energy.gov/energysaver/tires-and-fuel-economy
+
+<div id="Hawley"></div>
+Hawley, D. (2022, November 3). What are the different types of fuel injection?. J.D. Power and Associates.  
+https://www.jdpower.com/cars/shopping-guides/what-are-the-different-types-of-fuel-injection 
+
+<div id="Rossiter"></div>
+Rossiter, D. (2019, October 30). Box-Cox Transformation.  
+https://www.css.cornell.edu/faculty/dgr2/_static/files/R_html/Transformations.html 
+
+<div id="Schlimmer"></div>
+Schlimmer, J. (1987, May 18). Automobile. UCI Machine Learning Repository.  
+https://archive.ics.uci.edu/dataset/10/automobile 
+
+<div id="Sharma"></div>
+Sharma, M. (2022, March 4). Types of Fuel Injection System. Spinny Car Magazine.  
+https://www.spinny.com/blog/index.php/types-of-fuel-injection-systems/ 
+
+<div id="UCSUSA"></div>
+UCSUSA. (2017, December 6). A brief history of US fuel efficiency standards. Union of Concerned Scientists.  
+https://www.ucsusa.org/resources/brief-history-us-fuel-efficiency 
+
+<div id="Wikimedia"></div>
+Wikimedia Foundation. (2023, November 22). Multicollinearity. Wikipedia.  
+https://en.wikipedia.org/wiki/Multicollinearity 
+
+<div id="YM"></div>
+YM. (2019, January 15). The difference between a sports car engine and a regular engine. YourMechanic Advice.  
+https://www.yourmechanic.com/article/the-difference-between-a-sports-car-engine-and-a-regular-engine 
+
+<div id="KBB"></div>
+KBB Editors. (2022, August 1). What is curb weight?. Kelley Blue Book. https://www.kbb.com/what-is/curb-weight/ 
+
+<div id="Trust"></div>
+Trust Auto. (n.d.). Diesel vs. gasoline: All you need to know. https://www.trustauto.com/blog/diesel-vs-gasoline 
+
+<div id="Valdes-Dapena"></div>
+Valdes-Dapena, P. (2021, June 7). Why electric cars are so much heavier than regular cars. CNN business. https://www.cnn.com/2021/06/07/business/electric-vehicles-weight/index.html 
+
+<div id="STAT 462"></div>
+STAT 462. (2018). 4.2 - residuals vs. fits plot. 4.2 - Residuals vs. Fits Plot | STAT 462. https://online.stat.psu.edu/stat462/node/117/ 
+
+```{r references, include=FALSE}
+
+
+```
+
