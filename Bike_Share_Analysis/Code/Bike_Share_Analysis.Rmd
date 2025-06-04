@@ -1,0 +1,546 @@
+
+---
+title : 'Rented Bike Count Prediction'
+author: 'Maria Lee, Ruiyu Zhou, Tejas Shirshikar, and Qiong Zhang'
+output: 
+  pdf_document:
+    toc: false
+    number_sections: true
+---
+```{r, include=F}
+# Insert the function to *tidy up* the code when they are printed out
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=72),tidy=TRUE)
+
+# Start with a clean R environment
+rm(list = ls())
+```
+
+# Introduction 
+
+In recent years, bike-sharing systems have gained popularity as a sustainable and efficient mode of transportation in urban areas. Meanwhile, estimating the demand of rental bikes and ensuring a stable supply chain becomes a major concern to stakeholders and policy makers. Therefore, It is crucial to provide insights about the influencers on the usage of rental bikes. The Seoul Bike Sharing Demand dataset, capturing hourly bike rental patterns in Seoul, South Korea, from December 1, 2017 to November 30, 2018, provides detailed information to explore the dynamics of bike-sharing usage and factors influencing bike rentals. 
+
+We hypothesize that both environmental conditions and temporal factors significantly influence bike-sharing demand, with temperature, hour of the day, seasonal variations, and wind speed serving as key determinants. This hypothesis is grounded in the observation that Seoul experiences distinct and varied weather patterns across all four seasons, coupled with the assumption that bike rentals concentrate more during typical commute hours and periods of nightlife activity. We posit that temperature and the hour of the day are likely to exhibit a positive correlation with bike rental frequency, as warmer temperatures and daylight hours typically encourage outdoor activities. Conversely, seasonal changes and increasing wind speeds are expected to negatively impact bike rental frequency, particularly as conditions transition from summer to winter, making outdoor activities less appealing. By exploring the relationship between these variables and bike rental frequency, this study aims to offer actionable insights for bike rental companies and urban planners. 
+
+# Data 
+
+## Description 
+In this study, we used the SeoulBikeData data that was downloaded from UC Irvine Machine Learning Repository. The sampling process involved collecting bike rental data spanning from the end of 2017 to the end of 2018, covering a period of 365 days. Data was recorded hourly, with each hour denoted in the `Hour` column from 1 to 24, resulting in a total of 8,760 rows. This dataset is composed of 14 variables, including Date, Rented Bike Count, Hour, Temperature(C), Humidity(%), Windspeed(m/s), Visibility(10m), Dew Point Temperature(Celsius), Solar Radiation(Mj/m2), Snowfall(cm), Rainfall(mm), Seasons, Holiday, and Functioning Day.
+
+By checking the structure of the dataset, we found there was no missing value. The responsive variable (Rented Bike Count) is the number of rented bikes per hour. The Temperature, Humidity, Windspeed, Visibility, Dew Point Temperature, Solar Radiation, Hour, Snowfall and Rainfall are numerical variables. The Seasons, Holiday, and Functioning Day are categorical variables. We are also very interested in the impact of weekday vs weekends on bike demand and decided to derive two new categorical variables, DayofWeek (7 levels, from Sunday to Saturday) and Weekday (2 levels, weekday and weekend), based on Date.
+
+```{r, include = FALSE}
+library(dplyr)
+library(corrplot)
+# Load Data
+bike.data <- read.csv("../data/SeoulBikeData.csv", check.names = F)
+
+# Rename columns
+col.names <- c("Date", "Rented.Bike.Count", "Hour", "Temperature(C)", "Humidity(%)", "Wind.speed(m/s)", "Visibility(10m)", "Dew.point.temperature(C)", "Solar.Radiation(MJ/m2)", "Rainfall(mm)", "Snowfall(cm)", "Seasons", "Holiday", "Functioning.Day")
+colnames(bike.data) <- col.names
+
+# Basic Summary of the data
+nrow(bike.data)
+head(bike.data)
+summary(bike.data)
+
+# Find the missing data
+table(is.na(bike.data))
+colSums(is.na(bike.data))
+
+# Covert the date column to from character to Date type
+bike.data$Date <- as.Date(bike.data$Date, format = "%d/%m/%Y", origin = "1999-01-01")
+
+# Sort the data frame by date
+bike.data <- bike.data[order(bike.data$Date),]  
+
+# Change numerical variables as numeric
+bike.data$Rented.Bike.Count <- as.numeric(bike.data$Rented.Bike.Count)
+bike.data$Hour <- as.numeric(bike.data$Hour)
+bike.data$`Temperature(C)` <- as.numeric(bike.data$`Temperature(C)`)
+bike.data$`Humidity(%)` <- as.numeric(bike.data$`Humidity(%)`)
+bike.data$`Wind.speed(m/s)` <- as.numeric(bike.data$`Wind.speed(m/s)`)
+bike.data$`Visibility(10m)` <- as.numeric(bike.data$`Visibility(10m)`)
+bike.data$`Dew.point.temperature(C)` <- as.numeric(bike.data$`Dew.point.temperature(C)`)
+bike.data$`Solar.Radiation(MJ/m2)` <- as.numeric(bike.data$`Solar.Radiation(MJ/m2)`)
+bike.data$`Rainfall(mm)` <- as.numeric(bike.data$`Rainfall(mm)`)
+bike.data$`Snowfall(cm)` <- as.numeric(bike.data$`Snowfall(cm)`)
+
+# Change categorical variables as level
+
+bike.data$Seasons = factor(bike.data$Seasons)
+bike.data$Holiday = factor(bike.data$Holiday)
+bike.data$`Functioning.Day` = factor(bike.data$`Functioning.Day`)
+
+str(bike.data)
+
+# Obtain the frequency of each category
+seasons_table <- table(bike.data$Seasons)
+seasons_table 
+holiday_table <- table(bike.data$Holiday)
+holiday_table
+function_table <- table(bike.data$Functioning.Day)
+function_table
+
+# Adding weekdays to see if there is a difference
+bike.data$DayOfWeek <- weekdays(bike.data$Date)
+head(bike.data[,c('Date', "DayOfWeek")])
+bike.data$Weekday<-ifelse(bike.data$DayOfWeek!="Saturday" & bike.data$DayOfWeek!="Sunday","Weekday","Weekend")
+bike.data$Weekday=factor(bike.data$Weekday)
+
+# Unique count of Hour for each date
+unique_count_hour <- bike.data %>%
+  group_by(Date) %>%
+  mutate(unique_count_hour = n_distinct(Hour))
+unique_count_hour <- unique(unique_count_hour[, c("Date", "unique_count_hour")])
+```
+
+## EDA 
+
+Based on our explanatory analysis, we found that the histogram of `Rented.Bike.Count` exhibits a right-skewed distribution, with the mean exceeding the median (Figure 1). In positively skewed distributions, the mean tends to overestimate the central tendency by being influenced by extreme values. Analysis of rental counts across months reveals a peak in June, while winter months(Dec.-Feb.) witness the lowest counts. Also, the box plots of holiday and day of week shows that more bikes were rented in non-holiday than holiday and in weekdays than weekend. (Figure 2). This seasonal pattern suggests a strong temporal influence on bike rentals. Examination of the relationship between `Holiday` and `Functioning.Day` indicates a higher likelihood of non-functioning days during holidays (Figure 3). Considering the very low percentage of rented bike count in non-functioning day and holiday may impose bias to the model as explanatory variables, we decided not include these two variables. In the correlation plot (Figure 4), `Rented.Bike.Count` demonstrates positive correlation with , 'Hour',`Temperature(C)`, `Wind.speed(m/s)`, `Visibility(10m)`, `Dew.point.temperature(C)`, `Solar.Radiation(MJ/m2)` and negative correlation with `Humidity(%)`, `Rainfall(mm)`,`Snowfall(cm)`. These correlations suggest potential predictive relationships between weather variables and bike rental counts. Moreover, as the most important factor, `Temperature(C)` exhibits a strong positive correlation with `Dew.point.temperature(C)`, indicating possible multicollinearity in the regression model.  In addition to the correlation plot, we had generated multiple scatter plots between numeric variables and `Rented.Bike.Count`. These scatter plots revealed a potential quadratic relationship between `Rented.Bike.Count` and `Temperature`, indicating that the relationship may not be purely linear. Also, the `Rainfall` and `Snowfall` have many 0 values; we will not consider these two variables in our models.
+
+Additionally, we neither removed extreme outliers found in the `Rented.Bike.Count`. This is because these outliers represent only a small proportion of the entire dataset. By retaining them, we preserve genuine variations in the data, enhancing the generalizability of the results to real-world scenarios.
+```{r EDA1, include = F, echo = FALSE, fig.width = 5, fig.height = 4, fig.align = 'center', warning = F}
+# EDA
+library(ggplot2)
+library(gridExtra)
+
+# 1) Number of dates in the sample
+print(paste("Number of dates in the sample:", length(unique(bike.data$Date))), 
+      main = "Histogram of Random Data",  # Title
+     xlab = "Values",                   # X-axis label
+     ylab = "Frequency")
+print(paste("Start Date:", bike.data$Date[1]))
+print(paste("End Date:", bike.data$Date[nrow(df)]))
+
+# Boxplot of rented bike count
+boxplot_count <- boxplot(bike.data$Rented.Bike.Coun, main = "Box Plot of Rented Bike Count", ylab = "Values")
+print(boxplot_count$stats)
+nrow(bike.data[bike.data$Rented.Bike.Count > 2377, ])
+nrow(bike.data[bike.data$Rented.Bike.Count > 2377, ]) / nrow(bike.data)
+```
+
+```{r EDA2, include=F, echo = FALSE, fig.width = 5, fig.height = 4, fig.align = 'center', warning = F}
+# 5) Rental counts vs. month_Figure 2
+bike.data$month <- format(as.Date(bike.data$Date), "%m")
+unique(bike.data$month)
+table(bike.data$month)
+
+g.month <- ggplot(bike.data, aes(x = `month`, y = `Rented.Bike.Count`)) +
+  geom_boxplot() +
+  labs(title="Month vs. Rented Bike Count", x="Month", y="Rented Bike Count")
+
+# 6) Boxplot of rented bike count vs. factors __Figure 6
+g.seasons <- ggplot(bike.data, aes(x = Seasons, y = `Rented.Bike.Count`)) +
+ geom_boxplot() +
+ labs(title="Fig 2: Seasons vs. Count", x="Seasons", y="Rented Bike Count")
+
+g.holiday <- ggplot(bike.data, aes(x = Holiday, y = `Rented.Bike.Count`)) +
+  geom_boxplot() +
+  labs(title="Holiday vs. Rented Bike Count", x="Holiday", y="Rented Bike Count")
+
+g.funcday <- ggplot(bike.data, aes(x = `Functioning.Day`, y = `Rented.Bike.Count`)) +
+ geom_boxplot() +
+ labs(title="Functioning.Day vs. Rented Bike Count", x="Functioning.Day", y="Rented Bike Count")
+
+g.dayofweek <- ggplot(bike.data, aes(x = `DayOfWeek`, y = `Rented.Bike.Count`)) +
+  geom_boxplot() +
+  labs(title="DayOfWeek vs. Rented Bike Count", x="DayOfWeek", y="Rented Bike Count")
+
+g.weekday <- ggplot(bike.data, aes(x = `Weekday`, y = `Rented.Bike.Count`)) +
+  geom_boxplot() +
+  labs(title="Fig 2: Weekday vs. Count", x="Weekday", y="Rented Bike Count")
+
+g.sea_rain <- ggplot(bike.data, aes(x = `Seasons`, y = `Rainfall(mm)`)) +
+  geom_boxplot() +
+  labs(title="Season vs. Rainfall(mm)", x="Season", y="Rainfall")
+
+g.sea_snow <- ggplot(bike.data, aes(x = `Seasons`, y = `Snowfall(cm)`)) +
+  geom_boxplot() +
+  labs(title="Season vs. Snowfall(cm)", x="Season", y="Snowfall")
+
+grid.arrange(g.month, g.seasons, g.holiday, g.weekday, nrow = 2)
+```
+
+```{r EDA3, include=F,echo = FALSE, fig.width = 5, fig.height = 4, fig.align = 'center', warning = F}
+# 7) Barplot
+# Create a bar plot_Figure 3
+ggplot(bike.data, aes(x = Holiday, fill = factor(Functioning.Day))) +
+  geom_bar(position = "dodge", stat = "count") +
+  geom_text(stat = "count", aes(label = after_stat(count)), 
+            position = position_dodge(0.9), vjust = -0.2) +
+  labs(title = "Functioning Day Comparison between Holiday and Non-Holiday",
+       x = "Holiday",
+       y = "Count", 
+       fill = "Functioning") +
+  scale_fill_manual(values = c("No" = "Orange", "Yes" = "Blue")) +
+  theme_minimal()
+
+# 8) Correlation plot of numerical variables
+numeric_cols <- colnames(bike.data)[2:11]
+numeric_cols
+
+# Calculate the correlation
+cor_numeric <- cor(bike.data[, numeric_cols])
+```
+
+```{r, echo=F, fig.width = 4, fig.height = 3.5, warning = F, out.width='50%'}
+# 2) Histogram of Rental Count_Figure 1
+hist.g <- hist(bike.data$Rented.Bike.Count, 
+     main = "Fig 1: Histogram of Rented Bike Density",  # Title
+     xlab = "Rented Bike Count",                   # X-axis label
+     ylab = "Density", probability = TRUE,
+     cex.main = 0.8)
+abline(v = mean(bike.data$Rented.Bike.Count), col = 'red', lwd = 3)
+abline(v = median(bike.data$Rented.Bike.Count), col = 'green', lwd = 3)
+#lines(density(bike.data$Rented.Bike.Count), col = 'blue', lwd = 3)
+#hist.g
+
+# box plot
+grid.arrange(g.seasons, g.weekday, nrow=2)
+```
+```{r, echo=F, fig.width = 5, fig.height = 4, warning = F, out.width='70%'}
+# Visualize the correlation
+corrplot(cor_numeric, method = "color", 
+         tl.col = "black", tl.srt = 30, # label color and rotation
+         main = "Fig 3: Correlation Plot of Numerical Variables", 
+         addCoef.col = "black",
+         number.cex = 0.7, tl.cex = 0.7, 
+         mar=c(0,0,1,0))
+```
+
+```{r EDA5, include=F, echo = FALSE, fig.width = 5, fig.height = 4, fig.align = 'center', warning = F}
+# 9) Scatter plot of rented bike count vs other_Figure 5
+g.temp <- ggplot(bike.data, aes(x = `Temperature(C)`, y = `Rented.Bike.Count`))  +
+  geom_point(alpha=0.5) +
+  geom_smooth(method="lm", col="blue") +
+  labs(title="Temperature vs. Rented Bike Count", x="Temperature (C)", y="Rented Bike Count")
+g.hour <- ggplot(bike.data, aes(x = `Hour`, y = `Rented.Bike.Count`))  +
+  geom_point(alpha=0.5) +
+  geom_smooth(method="lm", col="blue") +
+  labs(title="Hour vs. Rented Bike Count", x="Hour", y="Rented Bike Count")
+g.humidity <- ggplot(bike.data, aes(x = `Humidity(%)`, y = `Rented.Bike.Count`))  +
+  geom_point(alpha=0.5) +
+  geom_smooth(method="lm", col="blue") +
+  labs(title="`Humidity(%)` vs. Rented Bike Count", x="`Humidity(%)`", y="Rented Bike Count")
+g.wind <- ggplot(bike.data, aes(x = `Wind.speed(m/s)`, y = `Rented.Bike.Count`))  +
+  geom_point(alpha=0.5) +
+  geom_smooth(method="lm", col="blue") +
+  labs(title="Wind.speed(m/s) vs. Rented Bike Count", x="Wind.speed(m/s)", y="Rented Bike Count")
+g.visibility <- ggplot(bike.data, aes(x = `Visibility(10m)`, y = `Rented.Bike.Count`))  +
+  geom_point(alpha=0.5) +
+  geom_smooth(method="lm", col="blue") +
+  labs(title="Visibility(10m) vs. Rented Bike Count", x="Visibility(10m)", y="Rented Bike Count")
+g.dewpoint <- ggplot(bike.data, aes(x = `Dew.point.temperature(C)`, y = `Rented.Bike.Count`))  +
+ geom_point(alpha=0.5) +
+ geom_smooth(method="lm", col="blue") +
+ labs(title="Dew.point.temperature(C) vs. Rented Bike Count", x="Dew.point.temperature(C)", y="Rented Bike Count")
+g.solar <- ggplot(bike.data, aes(x = `Solar.Radiation(MJ/m2)`, y = `Rented.Bike.Count`))  +
+  geom_point(alpha=0.5) +
+  geom_smooth(method="lm", col="blue") +
+  labs(title="Solar.Radiation(MJ/m2) vs. Rented Bike Count", x="Solar.Radiation(MJ/m2)", y="Rented Bike Count")
+g.rain <- ggplot(bike.data, aes(x = `Rainfall(mm)`, y = `Rented.Bike.Count`))  +
+  geom_point(alpha=0.5) +
+  geom_smooth(method="lm", col="blue") +
+  labs(title="Rainfall(mm) vs. Rented Bike Count", x="Rainfall(mm)", y="Rented Bike Count")
+g.snow <- ggplot(bike.data, aes(x = `Snowfall(cm)`, y = `Rented.Bike.Count`))  +
+  geom_point(alpha=0.5) +
+  geom_smooth(method="lm", col="blue") +
+  labs(title="Snowfall(cm) vs. Rented Bike Count", x="Snowfall(cm)", y="Rented Bike Count")
+
+grid.arrange(g.temp, g.hour, g.humidity, g.wind,nrow =2)
+grid.arrange(g.visibility, g.solar, g.rain, g.snow,nrow =2)
+```
+
+# Model Development (40 points)
+
+## Poisson regression
+Our simple poisson regression model 1 is, 
+\begin{align*}
+\log(\lambda_i) &= \beta_0 + \beta_1 \cdot \text{Temperature(C)}_i + \beta_2 \cdot \text{Hour}_i \\
+&\quad + \beta_3 \cdot \text{SeasonsSpring}_i +  \beta_4 \cdot \text{SeasonsSummer}_i \\
+&\quad + \beta_5 \cdot \text{SeasonsWinter}_i + \beta_6 \cdot \text{Wind.speed(m/s)}_i 
+\end{align*}
+Based on the Wald tests, all of the predictors were statistically significant with p-values less than 0.0001, indicating strong evidence against the null hypothesis for each explanatory variable's effect of the count of rented bikes. It was further confirmed by a likelihood ratio test comparing our model against a null, yielding a highly significant result of p-value less than 2.2e-16, demonstrating that our model provides a better fit to the data than a model without any predictor. The coefficients, expressed in percentage changes, offer a clear interpretation of the effects of predictor variables on the expected count of rented bikes. We see an increase in bike rentals for an increase in `temperature`, `hour`, `Wind Speed`. With Autumn as a reference, we see 9.77% decrease in rentals in Spring, 16% decrease in Summer, and 75.67% decrease in Winter. The coefficients for temperature, hour and seasons are consistent with our expected directions in the initial hypothesis. Wind Speed's positive effect could be due to slight increase in wind speed aiding cycles in a desired direction or simply not deterring the bicyclers in Seoul. 
+```{r,include=F, echo = FALSE}
+model_poisson_1 <- glm(`Rented.Bike.Count` ~ `Temperature(C)` + `Hour` + `Seasons` + 
+                         `Wind.speed(m/s)`, data = bike.data, family = poisson(link = "log"))
+summary(model_poisson_1)
+```
+
+```{r Likelihood Ratio Test, include=F, echo = FALSE }
+null_mod <- glm(`Rented.Bike.Count` ~ 1, data = bike.data, family = poisson(link = 'log'))
+anova(null_mod, model_poisson_1, test = 'LRT')
+```
+
+```{r Interpreting Coefficients - Percentage Change,include=F, echo = FALSE}
+(exp(coef(model_poisson_1))-1)*100
+```
+
+## Model Comparison (10 points)
+
+Subsequently, we opted to enhance our initial Poisson model by integrating additional explanatory variables to mitigate potential omitted variable bias. Our Poisson regression model 2 will incorporate Humidity(%), Visibility(10m), Weekday, and Solar.Radiation. In other words, we exclude explanatory variables Rainfall, Snowfall, Holiday, and Functioning.Day for reasons elucidated earlier in the report. The equation is expressed as follows:
+\begin{align*}
+\log(\lambda_i) &= \beta_0 + \beta_1 \cdot \text{Temperature(C)}_i + \beta_2 \cdot \text{Hour}_i \\
+&\quad + \beta_3 \cdot \text{SeasonsSpring}_i +  \beta_4 \cdot \text{SeasonsSummer}_i \\
+&\quad + \beta_5 \cdot \text{SeasonsWinter}_i + \beta_6 \cdot \text{Wind.speed(m/s)}_i \\
+&\quad + \beta_7 \cdot \text{Humidity}_i + \beta_8 \cdot \text{Visibility(10m)}_i \\
+&\quad + \beta_9 \cdot \text{Weekday}_i +  \beta_10 \cdot \text{Solar.Radiation(MJ/m2)}_i
+\end{align*}
+Based on Wald tests, all predictors were statistically significant (p < 0.0001), indicating strong evidence against the null hypothesis for each variable's effect on the count of rented bikes, a finding further supported by a likelihood ratio test. This test assesses if the full model significantly improves fitting compared to the null model, where the null hypothesis (H0) assumes the coefficient associated with the added variable is zero. Since all p-values for variables `Temperature(C)`,  `Hour`, `Seasons`, `Wind.speed(m/s)`, `Humidity(%)`, `Visibility(10m)`, `Weekday`, `Solar.Radiation(MJ/m2)` are < 2.2e-16, we reject H0, concluding coefficients for all independent variables are statistically different from zero. Additionally, separate likelihood ratio tests for model 1 and model 2, with H0 stating coefficients associated with added variables are zero, yield p < 2.2e-16. Thus, we reject H0, indicating coefficients for `Humidity(%)`, `Visibility(10m)`, `Weekday`,  and `Solar.Radiation(MJ/m2)` are significantly different from zero.
+
+We see bike rentals increase with an increase in `Temperature(C)`,  `Hour`, `Wind.speed(m/s)`, `Visibility(10m)`, while bike rentals decrease with an increase in `Humidity(%)` and `Solar.Radiation(MJ/m2)`. For categorical variables,  we have negative coefficients for `Seasons`, with Autumn as a reference, starting from -8.77% in Spring and decreasing to -3.44% in Summer and -91.15% in Winter; we can see negative coefficients for `Weekday`, with Weekday as a reference, the bike rentals decrease if it is a weekend. 
+```{r,include=F, echo = FALSE}
+# Second Poisson Model
+model_poisson_2 <- glm(`Rented.Bike.Count` ~ `Temperature(C)` + `Hour` + `Seasons` + `Wind.speed(m/s)` 
+                       + `Humidity(%)` + `Visibility(10m)` + `Weekday` + `Solar.Radiation(MJ/m2)`, 
+                       data = bike.data, family = poisson(link = "log"))
+summary(model_poisson_2)
+```
+```{r,include=F, echo = FALSE}
+library(car)
+# Compare null model and model 2
+anova(null_mod, model_poisson_2, test = 'LRT')
+
+# Compare model 1 and model 2
+anova(model_poisson_1, model_poisson_2, test = 'LRT')
+```
+Furthermore, quadratic terms or interactions were introduced where they could potentially explain variations in bike rental demand. For example, assessing whether the effect of Hour on bike demand differs between weekdays and weekends was considered in `model_poisson_3`. Based on Wald tests, all predictors were statistically significant (p < 0.0001), indicating strong evidence against the null hypothesis for each variable's effect on the count of rented bikes, a finding further supported by a likelihood ratio test. We reject H0, concluding coefficients for all independent variables are statistically different from zero. Additionally, separate likelihood ratio tests for model 2 and model 3, with H0 stating coefficients associated with added variables are zero, yield p < 2.2e-16. Thus, we reject H0, indicating coefficients for  the square of `Temperature(C)` and `Hour:Weekday` are significantly different from zero. We see bike rentals decrease with an increase in the square of `Temperature(C)` which somehow alleviated the effect of `Temperature(C)`. The negative coefficient on the interaction `Hour:Weekday` indicates that this effect by hour is alleviated for weekdays.
+```{r,include=F, echo = FALSE}
+model_poisson_3 <- glm(`Rented.Bike.Count` ~ `Temperature(C)` + `Hour` + `Seasons` + `Wind.speed(m/s)` 
+                       + `Humidity(%)` + `Visibility(10m)` + `Weekday` + `Solar.Radiation(MJ/m2)`
+                       + I(`Temperature(C)`^2) + `Hour`:`Weekday`
+                       , data = bike.data, family = poisson(link = "log"))
+summary(model_poisson_3)
+```
+
+```{r,include=F, echo = FALSE}
+# Compare null model and model 3
+anova(null_mod, model_poisson_3, test = 'LRT')
+
+# Compare model 2 and model 3
+anova(model_poisson_2, model_poisson_3, test = 'LRT')
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE,out.width = "60%", out.height = "100px"}
+library(stargazer)
+stargazer(model_poisson_1, model_poisson_2, model_poisson_3, type='text', omit.stat = "f", 
+          star.cutoffs = c(0.05, 0.01, 0.001), column.sep.width = "2pt",
+          title = "Comparison of Three Poisson Model")
+```
+Finally, we applied three information criteria for the three models (`model_poisson_1`, `model_poisson_2`, `model_poisson_3`) and rank the models based on each criterion. The Akaike Information Criterion (AIC), Akaike Information Criterion with a correction (AICc), and Bayesian Information Criterion (BIC) are measures of model fit that penalize complexity. Lower values of AIC and BIC indicate better model fit. AICc is an extension of the AIC that adjusts for the bias introduced by AIC when dealing with small sample sizes. The three models' AICc and AIC are same, because the sample size is not small relative to the number of parameters in the model. Therefore, the AICc correction term doesn't significantly impact the comparison. The three models' AIC and BIC produce similar values, suggesting that the models' performance in terms of fit to the data and complexity are consistent across both criteria.
+```{r, include=FALSE,echo=FALSE, warning=FALSE, message=FALSE}
+## AIC
+data.frame(model_poisson_1 = AIC(model_poisson_1), model_poisson_2 = AIC(model_poisson_2), model_poisson_3 = AIC(model_poisson_3))
+
+#AICc
+library(gamlr)
+data.frame(model_poisson_1 = AICc(model_poisson_1), model_poisson_2 = AICc(model_poisson_2), model_poisson_3 = AICc(model_poisson_3))
+
+#BIC
+data.frame(model_poisson_1 = BIC(model_poisson_1), model_poisson_2 = BIC(model_poisson_2), model_poisson_3 = BIC(model_poisson_3))
+```
+
+## Model Assessment 
+    
+When we use poisson model, we make several assumptions. First, the data are generated independently by the identical Poisson distribution. However, in real world, it is hardly to have perfect IID. The rented bike data may subject to geographic clustering and temporal clustering. For example, some areas, such as residetial area and business area, may have higher needs of rented bike than entertainment area. Some temporal period, such as rush hours in weekday could have higher needs of rented bike than non-rush hours. Second, the distribution of the response variable is the Poisson distribution. Third, the mean of the distribution is linked to the explanatory variables by logistic link. Fourth, we assume the logistic link is in a linear fashion. Since the residual of poisson model depends on the mean and we may not have equal variance in the raw residual(homoskadasity), we will use Pearson residuals and standardized Pearson residuals to correct it by including standard deviation. 
+
+### Model Assumptions Assessment
+We generated standard Pearson residual plot against each of the numeric explanatory variables to test assumption of parameter linearity(Figure 4). The plots that had severe curve would need more attention, suggesting that we do need transformation terms or need more explanatory variables. For example, we may need adding and recoding snowfall and rainfall as binary variable, adding interaction between temperature and hour, factoring hour as categorical variable, remove outliers in humidity, etc.
+
+We used standardized Pearson residuals plot against the fitted values to examine whether the link we specified is appropriate. The plot showed inconsistent variance through out the range of the response and severe curvature was detected, suggesting that the logistic link function may not fit very well here(Figure 5).
+
+We also checked the extreme residuals by using a plot of the residuals against the linear predictor(Figure 5). It showed that there were numerous residuals with magnitudes larger than 2 or 3. This is the sign of overdispersion, meaning more variability in the counts than the model estimated. This is an indication that there may be important explanatory variables missing from the model.<br>
+
+**Figure 4. Linearity Test**\
+
+```{r, warning=FALSE, echo=FALSE, message=FALSE,fig.width = 8, fig.height = 4}
+pred <- predict(model_poisson_3, type = "response")
+res <- residuals(model_poisson_3, type = "pearson")
+s.res <- rstandard(model_poisson_3, type = "pearson")
+lin.pred <- model_poisson_3$linear.predictors
+
+df.plot <- data.frame(bike.data, pred ,res ,s.res , lin.pred)
+df.plot$Tem2<-df.plot$Temperature.C.^2
+df.plot$Hour_Weekday<-ifelse(bike.data$Weekday=="Weekday", 0, 1)*bike.data$Hour
+
+#Standardized Pearson residual vs Temperature plot _test for linearity 
+r.temp <-df.plot %>%
+  ggplot(aes(x = Temperature.C., y = s.res)) +
+  geom_point() +
+  geom_hline(yintercept=c(3, 2, 0, -2, -3), color = "red", linetype = "dashed")+
+  geom_smooth(se = FALSE)+
+  xlab("Temperature") +
+  ylab("Std Pearson res")+scale_y_continuous(limits = c(-42, 80)) 
+
+#Standardized Pearson residual vs Hour plot
+r.hour<-df.plot %>%
+  ggplot(aes(x = Hour, y = s.res)) +
+  geom_point() +
+  geom_hline(yintercept=c(3, 2, 0, -2, -3), color = "red", linetype = "dashed")+
+  geom_smooth(se = FALSE)+
+  xlab("Temperature") +
+  ylab("Std Pearson res")+scale_y_continuous(limits = c(-42, 80)) 
+
+#Standardized Pearson residual vs Humidity
+r.humidity<-df.plot %>%
+  ggplot(aes(x = Humidity..., y = s.res)) +
+  geom_point() +
+  geom_hline(yintercept=c(3, 2, 0, -2, -3), color = "red", linetype = "dashed")+
+  geom_smooth(se = FALSE)+
+  xlab("Humidity") +
+  ylab("Std Pearson res")+scale_y_continuous(limits = c(-42, 80)) 
+
+#Standardized Pearson residual vs Windspeed
+r.windspeed<-df.plot %>%
+  ggplot(aes(x = Wind.speed.m.s., y = s.res)) +
+  geom_point() +
+  geom_hline(yintercept=c(3, 2, 0, -2, -3), color = "red", linetype = "dashed")+
+  geom_smooth(se = FALSE)+
+  xlab("Windspeed") +
+  ylab("Std Pearson res")+scale_y_continuous(limits = c(-42, 80)) 
+
+#Standardized Pearson residual vs Visibility
+r.visi<-df.plot %>%
+  ggplot(aes(x = Visibility.10m., y = s.res)) +
+  geom_point() +
+  geom_hline(yintercept=c(3, 2, 0, -2, -3), color = "red", linetype = "dashed")+
+  geom_smooth(se = FALSE)+
+  xlab("Visibility") +
+  ylab("Std Pearson res")+scale_y_continuous(limits = c(-42, 80)) 
+
+#Standardized Pearson residual vs Solar Radiation
+r.SR<-df.plot %>%
+  ggplot(aes(x = Solar.Radiation.MJ.m2., y = s.res)) +
+  geom_point() +
+  geom_hline(yintercept=c(3, 2, 0, -2, -3), color = "red", linetype = "dashed")+
+  geom_smooth(se = FALSE)+
+  xlab("Solar Radiation") +
+  ylab("Std Pearson res")+scale_y_continuous(limits = c(-42, 80)) 
+
+#Standardized Pearson residual vs Temp2
+r.temp2<-df.plot %>%
+  ggplot(aes(x = Tem2, y = s.res)) +
+  geom_point() +
+  geom_hline(yintercept=c(3, 2, 0, -2, -3), color = "red", linetype = "dashed")+
+  geom_smooth(se = FALSE)+
+  xlab("Temperature^2") +
+  ylab("Std Pearson res")+scale_y_continuous(limits = c(-42, 80)) 
+
+#Standardized Pearson residual vs hour:weekday
+r.hour_weekday<-df.plot %>%
+  ggplot(aes(x = Hour_Weekday, y = s.res)) +
+  geom_point() +
+  geom_hline(yintercept=c(3, 2, 0, -2, -3), color = "red", linetype = "dashed")+
+  geom_smooth(se = FALSE)+
+  xlab("Hour_Weekday Interaction") +
+  ylab("Std Pearson res")+scale_y_continuous(limits = c(-42, 80)) 
+
+
+grid.arrange(r.hour, r.temp,r.visi, r.windspeed, r.SR, r.humidity,r.temp2, r.hour_weekday, nrow=2, ncol =4)
+
+```
+
+**Figure 5. Link Test and Outlier Test** \
+
+```{r, warning=FALSE,echo=FALSE, message=FALSE,fig.width = 8, fig.height = 2}
+#Standardized Pearson residual vs Fitted Values_test for link function
+#Apparently link is not an appropriate explanation because ofthe apparent curve between standardized residuals and Fitted values.
+link<-df.plot %>%
+  ggplot(aes(x = pred, y = s.res)) +
+  geom_point() +
+  geom_hline(yintercept=c(3, 2, 0, -2, -3), color = "red", linetype = "dashed")+
+  geom_smooth(se = FALSE)+
+  ggtitle("Std residuals vs. Fitted Values") + 
+  xlab("Fitted Values") +
+  ylab("Standardized Pearson residuals")+scale_y_continuous(limits = c(-42, 80)) 
+
+dist<-df.plot %>%
+  ggplot(aes(x = lin.pred, y = s.res)) +
+  geom_point() +
+  geom_hline(yintercept=c(3, 2, 0, -2, -3), color = "red", linetype = "dashed")+
+  geom_smooth(se = FALSE)+
+  ggtitle("Std residuals vs. Linear Predictor") + 
+  xlab("Linear Predictor") +
+  ylab("Standardized Pearson residuals")+scale_y_continuous(limits = c(-42, 80)) 
+
+
+grid.arrange(link, dist,ncol =2)
+```
+
+### Over Dispersion
+The dispersion test also showed that the dispersion estimate is much higher than 1 and p value is smaller than 0.05, indicating we could reject the null hypothesis and conclude that we have overdispersion. In other words, we should fit a quasipoisson or negative binomial regression. The stargazer table showed that poission and quasipoisson have identical results. However, based on AICc, negative binomial has much lower value than poisson and quasipoisson models, indicating negative binomial model is better fit for this data. Based on this table, we final choice will be negative binomial model with following equation:
+$$\log(\lambda_i) = \beta_0 + \beta_1 \cdot \text{Temperature(C)}_i + \beta_2 \cdot \text{Hour}_i + \beta_3 \cdot \text{SeasonsSpring}_i + $$
+$$\beta_4 \cdot \text{SeasonsSummer}_i + \beta_5 \cdot \text{SeasonsWinter}_i + \beta_6 \cdot \text{Wind.speed(m/s)}_i + $$ 
+$$ + \beta_7 \cdot \text{Weekday}_i +  \beta_8 \cdot \text{Hour*Weekday}_i +  \beta_{9} \cdot \text{Humidity}_i$$ 
+$$ + \beta_{10} \cdot \text{Temperature}^2_i $$ 
+
+```{r,warning=FALSE,echo=FALSE, message=FALSE}
+library(AER)
+dispersiontest(model_poisson_3)
+```
+```{r,warning=FALSE,echo=FALSE, message=FALSE}
+library(MASS)
+library(stargazer)
+quasi.poisson <- glm(`Rented.Bike.Count` ~ `Temperature(C)` + `Hour` + `Seasons` 
+                     + `Wind.speed(m/s)` + `Humidity(%)` + `Visibility(10m)`
+                     +`Weekday` + `Solar.Radiation(MJ/m2)`
+                       + I(`Temperature(C)`^2) + `Hour`:`Weekday`
+                       , data = bike.data, family = quasipoisson)
+
+neg.binom <- glm.nb(`Rented.Bike.Count` ~ `Temperature(C)` + `Hour` + `Seasons` 
+                    + `Wind.speed(m/s)`  + `Humidity(%)` + `Visibility(10m)`
+                    +`Weekday`+ `Solar.Radiation(MJ/m2)`
+                       + I(`Temperature(C)`^2) + `Hour`:`Weekday`
+                       , data = bike.data)
+```
+
+```{r,warning=FALSE,echo=FALSE, message=FALSE,out.width = "60%", out.height = "100px"}
+stargazer(model_poisson_3, quasi.poisson, neg.binom, type='text',omit.stat = "f", 
+          star.cutoffs = c(0.05, 0.01, 0.001), title = "Comparison of Poisson, QuasiPoisson, Negative Binomial")
+```
+
+## Alternative Specification
+
+The linear regression model with the same set of explanatory variables from can be written as follows:
+\begin{align*}
+\text{Rented Bike Count} &= \beta_0 + \beta_1 \text{Temperature} + \beta_2 \text{Hour} + \beta_3 \text{Spring} \\
+&\quad + \beta_4 \text{Summer} + \beta_6 \text{Winter} + \beta_7 \text{Windspeed} \\
+&\quad + \beta_8 \text{Humidity} + \beta_9 \text{Visbility} + \beta_{10} \text{Weekend} \\
+&\quad + \beta_{11} \text{SolarRadiation} + \beta_{12} \text{Temperature}^2 + \beta_{13} \text{Hour:Weekend}
+\end{align*}
+
+```{r, echo = F, warning=FALSE, message = F}
+lm_model <- lm(`Rented.Bike.Count` ~ `Temperature(C)` + `Hour` + `Seasons` + `Wind.speed(m/s)`
+                       + `Humidity(%)` + `Visibility(10m)`+`Weekday` + `Solar.Radiation(MJ/m2)`
+                       + I(`Temperature(C)`^2) + `Hour`:`Weekday`,
+                       data = bike.data)
+summary(lm_model)
+```
+From the summary of the linear regression shown in the stargazer table shown above, linear explanatory variables for temperature, hour, seasons (spring, winter), humidity,and solar radiation are all statistically significant (p-value <0.05). The non-linear explanatory variables that also holds significance is interaction term between hour and weekend. Temperature as a continuous variable seems to have the strongest influence for rented bike count, where one degree change in celsius results in an increase of 24.33 additional bikes rented. In terms of discrete variables, the season winter has the strongest influence on bike rentals as if the season is winter, holding all other variables constant, bike rentals go down by 298.8 units. This makes sense as during warmer periods, more people would want to rent bikes and during colder seasons where snowfall is common, less people would want to rent bikes. Next we fit the values from the linear model and the poisson model and graph the predictions on a Bike Rented Count vs Temperature graph to see which model predicts the data better(Figure 6).
+
+```{r, echo = F, warning=FALSE,fig.width = 6, fig.height = 2}
+fitted_values_poisson <- predict(model_poisson_3, type = "response")
+fitted_values_lm <- predict(lm_model, type = "response")
+(plot_temp <- ggplot(bike.data, aes(x=`Temperature(C)`)) +
+  geom_point(aes(y=`Rented.Bike.Count`), alpha=0.5, position=position_jitter(h=0.2)) +
+  geom_line(aes(y=fitted_values_lm, color = "Linear Model"), linewidth=0.5) +
+  geom_line(aes(y=fitted_values_poisson, color = "Poisson Model"),
+            linewidth=0.5, alpha = 0.5) +  # Set alpha to 0.5 for transparency
+  labs(x = "Temperature (C)", y = "Rented Bike Counts", color = "Model") +
+  ggtitle("Figure 6. Linear vs Poisson predictions") +
+  theme(legend.position="right"))
+```
+
+In terms of fitting the data, we can see that the poisson model better fits the data than the linear model. When the temperature is lower, typically during the winter seasons, it can be seen that the linear model is predicting that the bike rentals will be less than zero. This is not actually possible as we need our predictions to be bounded by 0 so that predictions do not go below zero. The poisson model achieves this by taking a log of the mean which keeps our predictions above 0. We can see by the values of the temperature that we have quite a lot variance in rented bike counts as the temperature increases. The poisson model assumes that the variance is equal to mean and thus is able to tackle the over dispersion better than the linear model. The poisson model because it is taking the log of the mean, it allows for an explanatory variable to have a non linear relationship which better fits data with a higher variance. The linear model assumes that the explanatory variables react linearly with the dependent variables. As a result explanatory variables that were significant in the poisson model become less significant or insignificant in the linear model. As a result of the factors discussed above, the Poisson model better predicts the count of rented bikes than the linear model.
+
+# Conlusion
+In conclusion, this study aimed to explore the factors influencing bike-sharing demand using the Seoul Bike Sharing Demand dataset. The main hypothesis posited that environmental conditions and temporal factors significantly impact bike-sharing demand, with temperature, hour of the day, seasonal variations, and wind speed playing key roles.
+
+To address this hypothesis, we employed Poisson regression modeling, starting with a simple model (`model_poisson_1`) that included temperature, hour, seasons, and wind speed as linear terms. Likelihood ratio tests and Wald tests confirmed the statistical significance of all predictors, with strong evidence supporting their effects on the count of rented bikes. Interpretation of the coefficients revealed specific percentage changes associated with each explanatory variable, aligning with our initial expectations. Building upon this initial model, we expanded our analysis by incorporating additional explanatory variables, such as Weekday, Humidity, Visibility, and Solar Radiation, into `model_poisson_2`. Further exploration involved introducing quadratic terms of Temperature and interactions between Hour and Weekday (`model_poisson_3`) to capture potential variations in bike rental demand. Model comparison using information criteria (AIC, BIC, and AICc) revealed consistent rankings across the three models, reinforcing the suitability of our chosen variables in explaining bike-sharing demand. Additionally, assessment of model assumptions, such as linearity, link function, and probability model, confirmed the adequacy of the Poisson regression approach.
+
+In evaluating model fit, we utilized residual plots and standardized residuals to assess the poisson assumptions and appropriateness of our final model. These diagnostic tools helped identify potential issues, including overdispersion, and guided adjustments to improve model performance. The poisson regression model turned out to be not the most optimal model, which has overdispersion issues and may need collecting more explanatory variables. At last, we were able to prove that the negative binomial model is the better choice to fit the dataset. Comparison with alternative specifications, such as linear regression, highlighted the advantages of the Poisson model in handling count data with non-normal distributions and overdispersion. The Poisson model's ability to accommodate non-linear relationships and address variance-matching assumptions contributed to its superior predictive performance compared to linear regression.
+
+Overall, our findings provide valuable insights into the factors driving bike-sharing demand in urban environments, offering actionable recommendations for bike rental companies and urban planners. By considering environmental and temporal influences, stakeholders can optimize service delivery, enhance user experiences, and promote sustainable mobility solutions.
+
+While this study contributes valuable insights, it is not without limitations. The analysis focused solely on environmental and temporal factors, neglecting other potential influences such as socio-economic variables or marketing strategies. Future research could explore these additional factors to provide a more comprehensive understanding of bike-sharing demand dynamics. Additionally, the dataset's temporal scope was limited to one year, potentially overlooking long-term trends or seasonal variations beyond the study period. Despite these limitations, this study lays the groundwork for further investigations into bike-sharing demand, offering a robust framework for future research endeavors.
