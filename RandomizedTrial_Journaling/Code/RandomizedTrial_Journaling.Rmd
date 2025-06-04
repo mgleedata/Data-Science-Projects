@@ -1,0 +1,308 @@
+---
+title: "Randomized Trial of Gratitude Journaling on HS Students"
+author: "Maria Lee, Ishika Prashar, Kate Kostelc, and Sabreena Nasar"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(stargazer)
+```
+
+```{r}
+data <- read.csv("final.data.csv")
+data <- data.frame(data)
+names(data)[names(data) == "mid5.treatment.happ"] <- "final.happ"
+names(data)[names(data) == "mid5.treatment.grad"] <- "final.grad"
+names(data)[names(data) == "mid5.treatment.h.g"] <- "final.h.g"
+names(data)[names(data) == "Journaling.has.increased.my.overall.sense.of.well.being...out.of.6."] <- "increased.wellbeing"
+names(data)[names(data) == "Rank.the.amount.of.effort.you.applied.to.the.journaling...out.of.5."] <- "effort"
+names(data)[names(data) == "Explain.your.rank.of.effort..why.was.it.important.for.you.to.add.the.effort.you.did.to.your.journaling."] <- "effort.explanation"
+names(data)[names(data) == "Reflecting.on.your.experience.with.journaling..what.aspect.of.journaling.has.been.the.most.meaningful.to.you..Please.give.details.."] <- "reflection"
+names(data)[names(data) == "Do.you.think.that.journaling.has.helped.you.appreciate.the.positive.aspects.of.your.life.or.increased.your.ability.to.cope.with.a.difficult.situations..Please.explain.or.give.an.example."] <- "journaling.positive.aspects.coping"
+        
+            
+names(data)
+```
+```{r, message = F}
+library(dplyr)
+treatment.data <- data %>%
+  filter(Condition == 1)
+control.data <- data %>%
+  filter(Condition == 0)
+
+data$Preferred.Gender <- factor(data$Preferred.Gender)
+data$Class.Section <- factor(data$Class.Section)
+
+model <- lm(final.h.g ~ Condition + b1.happ + b1.h.g + Preferred.Gender + Class.Section + Bio.Grade, data = data)
+summary(model)
+```
+```{r, message = F, warning = F}
+library(ggplot2)
+library(patchwork)
+# Baseline happiness vs Final happiness
+happ <- ggplot(data, aes(x = b1.happ, y = final.happ)) +
+  geom_point() +
+  labs(x = "Baseline Happiness", y = "Final Happiness") +
+  ggtitle("Baseline Happiness vs Final Happiness")
+
+# Condition vs Final happiness
+c.happ <- ggplot(data, aes(x = as.factor(Condition), y = final.happ)) +
+  geom_boxplot() +
+  labs(x = "Condition", y = "Final Happiness") +
+  ggtitle("Condition vs Final Happiness")
+
+# Gender vs Final happiness
+g.happ <- ggplot(data, aes(x = Preferred.Gender, y = final.happ)) +
+  geom_bar(stat = "summary", fun = "mean", fill = "skyblue") +
+  labs(x = "Gender", y = "Final Happiness (Mean)") +
+  ggtitle(" Gender vs Final Happiness (Mean)")
+
+happ | c.happ | g.happ
+
+```
+```{r}
+# Z-score outliers
+outliers <- which(abs(scale(data$final.happ)) > 3) 
+outliers
+
+cleaned_data <- data[-outliers, ]
+dim(cleaned_data)
+```
+```{r, message = F, warning = F}
+happiness <- ggplot(cleaned_data, aes(x = b1.happ, y = final.happ)) +
+  geom_point() +
+  labs(x = "Baseline Happiness", y = "Final Happiness") +
+  ggtitle("Baseline Happiness vs Final Happiness")
+
+
+cond.happ <- ggplot(cleaned_data, aes(x = as.factor(Condition), y = final.happ)) +
+  geom_boxplot() +
+  labs(x = "Condition", y = "Final Happiness") +
+  ggtitle("Condition vs Final Happiness")
+
+
+gender.happ <- ggplot(cleaned_data, aes(x = Preferred.Gender, y = final.happ)) +
+  geom_bar(stat = "summary", fun = "mean", fill = "skyblue") +
+  labs(x = "Gender", y = "Final Happiness (Mean)") +
+  ggtitle("Gender vs Final Happiness (Mean)")
+
+happiness | cond.happ | gender.happ
+```
+
+```{r}
+model2 <- lm(final.h.g ~ Condition + b1.happ + b1.h.g + Preferred.Gender + Class.Section + Bio.Grade, data = cleaned_data)
+summary(model2)
+```
+
+
+Ishika's Edits/Additions Below:
+
+```{r}
+#subsetting data to only columns I need for this modeling procedure
+subset_data<- data[, c("Student.ID", "Preferred.Gender", "Location","Ethnicity","Class.Section", "Bio.Grade","Condition", "b1.happ", "b1.grad", "b1.h.g", "final.happ", "final.grad", "final.h.g", "increased.wellbeing", "effort")]
+
+#student id 174 has NA values for final survey scores, so they are being removed
+no_na_data <- subset_data[subset_data$Student.ID != 174, ]
+```
+
+```{r}
+#Turn bio grades into letter grades as this is what was used for blocking
+apply_grade <- function(row) {
+  ifelse(row < 60, "F",
+         ifelse(row >= 60 & row < 70, "D",
+                ifelse(row >= 70 & row < 80, "C",
+                       ifelse(row >= 80 & row < 90, "B", "A"))))
+}
+no_na_data$letter_grade <- factor(apply_grade(no_na_data$Bio.Grade))
+
+```
+
+Only gratitude outcomes
+
+```{r}
+#basic model is just regresses on condition - journaling
+grat_basic_model <- lm(final.grad~Condition, data=no_na_data)
+grat_basic_modelr <- coeftest(grat_basic_model, vcov = vcovHC)
+#model 1 regresses on journaling condition + baseline scores
+grat_model_1 <- lm(final.grad~Condition+b1.grad, data=no_na_data)
+grat_model_1r <- coeftest(grat_model_1, vcov = vcovHC)
+#model 2 regresses on journaling, baseline, + covariates that we blocked on 
+grat_model_2 <- lm(final.grad~Condition+Preferred.Gender+Location+Ethnicity+Class.Section+letter_grade+b1.grad, data=no_na_data)
+grat_model_2r <- coeftest(grat_model_2, vcov = vcovHC)
+#model 3 regresses on journaling, baseline, covariates we blocked on + effort score
+grat_model_3 <- lm(final.grad~Condition+Preferred.Gender+Location+Ethnicity+Class.Section+letter_grade+b1.grad+effort, data=no_na_data)
+grat_model_3r <- coeftest(grat_model_3, vcov = vcovHC)
+
+stargazer(grat_basic_modelr, grat_model_1r, grat_model_2r,grat_model_3r, type = "text")
+
+
+```
+
+
+
+
+Only happiness outcomes
+```{r}
+#basic model is just regresses on condition - journaling
+happ_basic_model <- lm(final.happ~Condition, data=no_na_data)
+happ_basic_modelr <- coeftest(happ_basic_model, vcov = vcovHC)
+#model 1 regresses on journaling condition + baseline scores
+happ_model_1 <- lm(final.happ~Condition+b1.happ, data=no_na_data)
+happ_model_1r <- coeftest(happ_model_1, vcov = vcovHC)
+#model 2 regresses on journaling, baseline, + covariates that we blocked on 
+happ_model_2 <- lm(final.happ~Condition+Preferred.Gender+Location+Ethnicity+Class.Section+letter_grade+b1.happ, data=no_na_data)
+happ_model_2r <- coeftest(happ_model_2, vcov = vcovHC)
+#model 3 regresses on journaling, baseline, covariates we blocked on + effort score
+happ_model_3 <- lm(final.happ~Condition+Preferred.Gender+Location+Ethnicity+Class.Section+letter_grade+b1.happ+effort, data=no_na_data)
+happ_model_3r <- coeftest(happ_model_3, vcov = vcovHC)
+
+stargazer(happ_basic_modelr, happ_model_1r, happ_model_2r,happ_model_3r, type = "text")
+```
+
+
+Gratitude and happiness outcomes
+```{r}
+#basic model is just regresses on condition - journaling
+gh_basic_model <- lm(final.h.g~Condition, data=no_na_data)
+gh_basic_modelr <- coeftest(gh_basic_model, vcov = vcovHC)
+#model 1 regresses on journaling condition + baseline scores
+gh_model_1 <- lm(final.h.g~Condition+b1.h.g, data=no_na_data)
+gh_model_1r <- coeftest(gh_model_1, vcov = vcovHC)
+#model 2 regresses on journaling, baseline, + covariates that we blocked on 
+gh_model_2 <- lm(final.h.g~Condition+Preferred.Gender+Location+Ethnicity+Class.Section+letter_grade+b1.h.g, data=no_na_data)
+gh_model_2r <- coeftest(gh_model_2, vcov = vcovHC)
+#model 3 regresses on journaling, baseline, covariates we blocked on + effort score
+gh_model_3 <- lm(final.h.g~Condition+Preferred.Gender+Location+Ethnicity+Class.Section+letter_grade+b1.h.g+effort, data=no_na_data)
+gh_model_3r <- coeftest(gh_model_3, vcov = vcovHC)
+
+stargazer(gh_basic_modelr, gh_model_1r, gh_model_2r,gh_model_3r, type = "text")
+```
+
+Covariate balance check
+```{r}
+install.packages("MatchIt")
+library(MatchIt)
+```
+
+```{r}
+
+summary(matchit(Condition ~ Location + Preferred.Gender + Ethnicity + Class.Section + letter_grade, data = no_na_data))
+
+```
+
+```{r}
+#demonstrates data is normally distributed as pval>.05, proceed with t test
+shapiro.test(no_na_data$b1.happ)
+
+t.test(b1.happ ~ Condition, data = no_na_data)
+#pval >.05 confirms that initially our happiness scores were comparable across groups
+```
+```{r}
+#demonstrates data is NOT normally distributed as pval<.05, proceed with wilcox test
+shapiro.test(no_na_data$b1.grad)
+
+wilcox.test(b1.grad ~ Condition, data = no_na_data)
+#pval >.05 confirms that initially our gratitude scores were comparable across groups
+```
+```{r}
+#demonstrates data is  normally distributed as pval>.05, proceed with wilcox test
+shapiro.test(no_na_data$b1.h.g)
+
+t.test(b1.h.g ~ Condition, data = no_na_data)
+#pval >.05 confirms that initially our happiness+gratitude scores were comparable across groups
+```
+Repeated Measures Analysis - see how scores change over time 
+
+Prepping data
+```{r}
+sub2_data <- data[, c("Student.ID", "Condition", "b1.happ", "b1.grad", "b1.h.g", "mid2.treatment.happ", "mid2.treatment.grad", "mid2.treatment.h.g", "mid3.treatment.happ", "mid3.treatment.grad", "mid3.treatment.h.g", "mid4.treatment.happ", "mid4.treatment.grad" ,"mid4.treatment.h.g", "final.happ", "final.grad", "final.h.g")]
+
+happ_scores <- c(sub2_data$b1.happ, sub2_data$mid2.treatment.happ, sub2_data$mid3.treatment.happ, sub2_data$mid4.treatment.happ, sub2_data$final.happ)
+time_points <- c(rep(1,107), rep(2,107), rep(3,107), rep(4,107), rep(5,107))
+conditonrep<-c(sub2_data$Condition,sub2_data$Condition,sub2_data$Condition,sub2_data$Condition,sub2_data$Condition)
+stud_id <- c(sub2_data$Student.ID,sub2_data$Student.ID,sub2_data$Student.ID,sub2_data$Student.ID,sub2_data$Student.ID)
+
+long_df <- data.frame(Student.ID = stud_id,
+                          Condition = conditonrep,
+                          TimePoint = time_points,
+                          HappinessScore = happ_scores)
+long_df
+```
+
+```{r}
+install.packages("ggpubr")
+library(ggpubr)
+```
+
+```{r}
+ggboxplot(long_df[long_df$Condition == 1, ], x = "TimePoint", y = "HappinessScore", add = "point") +
+  ggtitle("Treatment Group")
+
+ggboxplot(long_df[long_df$Condition == 0, ], x = "TimePoint", y = "HappinessScore", add = "point") +
+  ggtitle("Condition Group")
+```
+```{r}
+# Load the required packages
+library(ggplot2)
+library(ggpubr)
+
+# Create the side-by-side box plots
+ggboxplot(long_df, x = "TimePoint", y = "HappinessScore", color = "Condition", add = "point") +
+  facet_wrap(~ Condition, ncol = 2) +
+  ggtitle("Happiness Scores over Time")
+```
+
+```{r}
+long_df$Condition <- as.factor(long_df$Condition)
+bxp <- ggboxplot(
+  long_df, x = "TimePoint", y = "HappinessScore",
+  color = "Condition", palette = "jco"
+  )
+bxp
+```
+
+
+```{r}
+summary_df <- aggregate(HappinessScore ~ TimePoint + Condition, data = long_df, FUN = mean)  # or median
+summary_df$Condition <- factor(summary_df$Condition)
+
+ggplot(summary_df, aes(x = TimePoint, y = HappinessScore, color = Condition, group = Condition)) +
+  geom_line() +  # Add lines
+  geom_point() +  # Add points 
+  ylim(3.8, 4.05) + 
+  ggtitle("Mean/Median Happiness Scores over Time")
+
+```
+
+```{r}
+ggqqplot(long_df, "HappinessScore", facet.by = "TimePoint")
+
+```
+
+```{r}
+library(tidyverse)
+library(rstatix)
+```
+
+```{r}
+
+res.aov <- anova_test(data = long_df, dv = HappinessScore, wid = Student.ID, within = TimePoint)
+get_anova_table(res.aov)
+
+#The happiness score score was not statistically significantly different at the different time point
+```
+Time was not shown to be statistically significant when assessing scores as seen through below ANOVA test
+```{r}
+demo1.aov <- aov(HappinessScore ~ Condition * (TimePoint) + Error((Student.ID)), data = long_df)
+summary(demo1.aov)
+```
+
+
+
+
+
+
+
